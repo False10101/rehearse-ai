@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rehearse-ai-api"
+version = "0.1.0"
+description = "FastAPI backend for Rehearse AI"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "alembic>=1.14,<2.0",
+  "certifi>=2025.1.31",
+  "numpy>=2.2,<3.0",
+  "opencv-python>=4.11,<5.0",
+  "fastapi>=0.115,<1.0",
+  "pdf2image>=1.17,<2.0",
+  "pydantic-settings>=2.7,<3.0",
+  "python-multipart>=0.0.20,<1.0",
+  "python-pptx>=1.0,<2.0",
+  "PyJWT[crypto]>=2.10,<3.0",
+  "requests>=2.32,<3.0",
+  "psycopg[binary]>=3.2,<4.0",
+  "sqlalchemy>=2.0,<3.0",
+  "ultralytics>=8.3,<9.0",
+  "uvicorn[standard]>=0.34,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1.0",
+  "pytest>=8.3,<9.0",
+  "ruff>=0.9,<1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

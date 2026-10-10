@@ -78,6 +78,23 @@ web_modules/
 .next
 out
 
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Docker and local application files
+backend/.coverage
+frontend/coverage/
+backend/data/
+backend/*.pt
+
+# Local VPS connection helper. It may reference a personal SSH key path.
+scripts/connect-vps.sh
+
 # Nuxt.js build / generate output
 .nuxt
 dist
@@ -141,3 +158,14 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Isolated model comparison experiments and generated survey artifacts
+experiments/model-survey-20261007/
+
+# Local document helpers, generated deliverables, and source snapshots
+/tmp/
+/output/
+/backups/
+
+# macOS folder metadata (at any directory depth)
+.DS_Store
