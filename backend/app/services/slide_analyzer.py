@@ -37,6 +37,7 @@ from app.db.models import (
 )
 from app.db.session import get_session_factory
 from app.services.processing_diagnostics import log_processing_state
+from app.services.provider_requests import ProviderRequestError, post_provider_request
 from app.services.slide_design import (
     alignment_evidence,
     deck_style_evidence,
@@ -65,9 +66,11 @@ logger = logging.getLogger(__name__)
 class SlideAnalysisGenerationError(RuntimeError):
     """Raised when the model cannot produce a complete analysis after retries."""
 
-    def __init__(self, message: str, diagnostic: str | None = None):
+    def __init__(self, message: str, diagnostic: str | None = None,
+                 error_code: str = "invalid_analysis_response"):
         super().__init__(message)
         self.diagnostic = diagnostic
+        self.error_code = error_code
 
 
 class _StrictAnalysisModel(BaseModel):
@@ -764,7 +767,7 @@ def caption_slide_image(
                 + "\nReturn the complete JSON format and every required check."
             )
         try:
-            response = requests.post(
+            response = post_provider_request(
                 OPENROUTER_API_URL,
                 headers=openrouter_headers(),
                 json=payload,
@@ -783,6 +786,8 @@ def caption_slide_image(
                 raise ValueError("Vision description contained no usable source-grounded observations.")
             return slide_number, json.dumps({"description": description, "checks": reviews})
         except (requests.RequestException, ValueError, KeyError, TypeError, IndexError) as error:
+            if isinstance(error, ProviderRequestError):
+                raise
             last_error = error
             logger.warning(
                 "Vision analysis for slide %s failed on attempt %s/3 (%s): %s",
@@ -871,11 +876,14 @@ def enrich_slides_with_vision(
             }
             captions: dict[int, str] = {}
             failures: list[int] = []
+            provider_failure = None
             for completed, future in enumerate(as_completed(futures), start=1):
                 slide_number = futures[future]
                 try:
                     _, caption = future.result()
                 except Exception as error:
+                    if isinstance(error, ProviderRequestError):
+                        provider_failure = error
                     # A vision caption improves the later analysis, but a single failed
                     # caption must not discard an otherwise valid deck analysis.
                     caption = None
@@ -901,6 +909,8 @@ def enrich_slides_with_vision(
                     on_progress(25 + int(35 * completed / len(futures)))
 
             if analyzable_numbers and not captions:
+                if provider_failure is not None:
+                    raise provider_failure
                 raise RuntimeError("Visual analysis failed for every source slide. Please retry.")
 
         for slide in slides:
@@ -1310,7 +1320,7 @@ def analyze(slide_data: list[dict]) -> dict:
                 f"\nValidation details to correct: {last_diagnostic}"
             )
         try:
-            response = requests.post(
+            response = post_provider_request(
                 OPENROUTER_API_URL,
                 headers=openrouter_headers(),
                 json={
@@ -1375,6 +1385,10 @@ def analyze(slide_data: list[dict]) -> dict:
         ) as error:
             last_error = error
             last_diagnostic = analysis_error_summary(error)
+            if isinstance(error, ProviderRequestError):
+                raise SlideAnalysisGenerationError(
+                    str(error), diagnostic=last_diagnostic, error_code=error.error_code,
+                ) from error
             if isinstance(error, requests.RequestException) and error.response is not None:
                 provider_body = error.response.text
                 api_key = get_settings().openrouter_api_key
@@ -1403,6 +1417,7 @@ def analyze(slide_data: list[dict]) -> dict:
                     "The AI provider rejected the analysis request. "
                     "Check the provider configuration before retrying.",
                     diagnostic=last_diagnostic,
+                    error_code="AI_PROVIDER_REQUEST_FAILED",
                 ) from error
 
     raise SlideAnalysisGenerationError(
@@ -1505,22 +1520,22 @@ def run_slide_analysis(presentation_id: UUID) -> None:
         log_processing_state(
             presentation, job, event="slide_analysis_saved", analysis=analysis, available=True,
         )
-    except SlideAnalysisGenerationError as error:
+    except (SlideAnalysisGenerationError, ProviderRequestError) as error:
         logger.exception("Slide analysis rejected for presentation %s", presentation_id)
         session.rollback()
         presentation = session.get(Presentation, presentation_id)
         if presentation:
-            # Slide extraction and previews are still valid. Keep the deck usable
-            # and expose a manual analysis retry instead of failing the whole deck.
-            presentation.status = "completed"
-            presentation.processing_error_code = (
-                "Analysis returned incomplete data. Run Slide Analyzer again."
-            )
+            # Keep a prepared deck usable, but do not pretend preparation finished
+            # when a provider failure happened before any slides were saved.
+            presentation.status = "completed" if presentation.slide_count else "failed"
+            presentation.processing_error_code = error.error_code
         job = _latest_job(session, presentation_id, "slide_analysis")
         if job:
             job.status = "failed"
-            job.error_code = "invalid_analysis_response"
-            job.error_message = f"{error} Details: {error.diagnostic or 'Unavailable'}"[:1000]
+            job.error_code = error.error_code
+            job.error_message = (
+                f"{error} Details: {getattr(error, 'diagnostic', None) or 'Unavailable'}"
+            )[:1000]
             job.completed_at = datetime.now().astimezone()
         session.commit()
         if presentation:
@@ -1580,11 +1595,11 @@ def run_transcript_preparation(presentation_id: UUID) -> None:
         presentation = session.get(Presentation, presentation_id)
         if presentation:
             presentation.status = "failed"
-            presentation.processing_error_code = type(error).__name__[:80]
+            presentation.processing_error_code = getattr(error, "error_code", type(error).__name__)[:80]
         job = _latest_job(session, presentation_id, "transcript_prepare")
         if job:
             job.status = "failed"
-            job.error_code = type(error).__name__[:80]
+            job.error_code = getattr(error, "error_code", type(error).__name__)[:80]
             job.error_message = str(error)[:1000]
             job.completed_at = datetime.now().astimezone()
         session.commit()

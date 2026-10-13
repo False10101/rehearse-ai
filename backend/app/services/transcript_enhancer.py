@@ -8,6 +8,7 @@ from typing import Literal
 import requests
 from pydantic import BaseModel, Field, ValidationError
 
+from app.services.provider_requests import post_provider_request
 from app.services.slide_analyzer import ANALYSIS_MODEL, OPENROUTER_API_URL, openrouter_headers
 
 TRANSCRIPT_MODEL = ANALYSIS_MODEL
@@ -138,7 +139,7 @@ def _parse_json_content(response: requests.Response) -> dict:
 
 
 def _request_json(prompt: str, max_tokens: int = 2200) -> dict:
-    response = requests.post(
+    response = post_provider_request(
         OPENROUTER_API_URL,
         headers=openrouter_headers(),
         json={

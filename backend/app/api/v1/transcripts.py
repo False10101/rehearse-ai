@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.db.session import get_db_session, get_session_factory
 from app.services.processing_diagnostics import log_processing_state
+from app.services.provider_requests import ProviderRequestError
 from app.services.transcript_enhancer import (
     TRANSCRIPT_MODEL,
     TRANSCRIPT_PROMPT_VERSION,
@@ -97,6 +98,7 @@ class TranscriptResponse(BaseModel):
     processing_error_code: str | None
     bulk_generation_status: str | None
     bulk_generation_progress: int | None
+    bulk_generation_error_code: str | None = None
     slide_count: int | None
     slides: list[SlideTranscriptResponse]
 
@@ -386,6 +388,7 @@ def _response(session: Session, presentation: Presentation) -> TranscriptRespons
         processing_error_code=presentation.processing_error_code,
         bulk_generation_status=bulk_job.status if bulk_job else None,
         bulk_generation_progress=bulk_job.progress_percent if bulk_job else None,
+        bulk_generation_error_code=bulk_job.error_code if bulk_job else None,
         slide_count=presentation.slide_count,
         slides=[
             _response_for_slide(
@@ -610,6 +613,10 @@ def run_generate_all_transcripts(
                             presentation.id,
                             slide.slide_number,
                         )
+                        if isinstance(error, ProviderRequestError):
+                            # The provider helper already waited/retried. Never multiply
+                            # those attempts with the per-slide output retry loop.
+                            break
                 if last_error is not None:
                     raise last_error
             job.progress_percent = round(index / len(slides) * 100)
@@ -631,7 +638,7 @@ def run_generate_all_transcripts(
         )
         if job:
             job.status = "failed"
-            job.error_code = type(error).__name__[:80]
+            job.error_code = getattr(error, "error_code", type(error).__name__)[:80]
             job.error_message = str(error)[:1000]
             job.completed_at = datetime.now().astimezone()
             session.commit()
@@ -687,7 +694,8 @@ def generate_slide_transcript(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Script generation could not finish. Please retry.",
+            detail=str(error) if isinstance(error, ProviderRequestError)
+            else "Script generation could not finish. Please retry.",
         ) from error
 
     session.commit()
@@ -843,7 +851,8 @@ def enhance_transcript_selection(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Text enhancement could not finish. Please retry.",
+            detail=str(error) if isinstance(error, ProviderRequestError)
+            else "Text enhancement could not finish. Please retry.",
         ) from error
 
     start_prefix = start.current_text[: request.start.offset]
