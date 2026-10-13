@@ -1493,6 +1493,7 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.completed_at = datetime.now().astimezone()
         session.commit()
     except SlideAnalysisGenerationError as error:
+        logger.exception("Slide analysis rejected for presentation %s", presentation_id)
         session.rollback()
         presentation = session.get(Presentation, presentation_id)
         if presentation:
@@ -1510,6 +1511,7 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.completed_at = datetime.now().astimezone()
         session.commit()
     except Exception as error:
+        logger.exception("Slide analysis failed for presentation %s", presentation_id)
         session.rollback()
         presentation = session.get(Presentation, presentation_id)
         if presentation:
@@ -1556,6 +1558,7 @@ def run_transcript_preparation(presentation_id: UUID) -> None:
         presentation.processing_error_code = None
         session.commit()
     except Exception as error:
+        logger.exception("Transcript preparation failed for presentation %s", presentation_id)
         session.rollback()
         presentation = session.get(Presentation, presentation_id)
         if presentation:

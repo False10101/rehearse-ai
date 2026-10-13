@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 async def _reject_websocket(websocket: WebSocket, code: str, message: str, close_code: int) -> None:
+    logger.warning(
+        "Live connection rejected code=%s close_code=%s reason=%s", code, close_code, message
+    )
     await websocket.send_json({"type": "error", "code": code, "message": message})
     await websocket.close(code=close_code)
 

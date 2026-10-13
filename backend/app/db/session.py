@@ -13,7 +13,9 @@ def get_engine() -> Engine:
     database_url = get_settings().database_url
     if not database_url:
         raise RuntimeError("DATABASE_URL is required for database-backed endpoints.")
-    return create_engine(normalize_database_url(database_url), pool_pre_ping=True)
+    return create_engine(
+        normalize_database_url(database_url), pool_pre_ping=True, hide_parameters=True
+    )
 
 
 @lru_cache

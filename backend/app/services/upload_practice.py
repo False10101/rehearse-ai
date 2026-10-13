@@ -379,7 +379,7 @@ def transcribe_audio(audio_path: Path) -> dict[str, Any]:
             response.raise_for_status()
             result = response.json()
     except (OSError, requests.RequestException, ValueError) as error:
-        logger.warning("Upload-practice transcription failed: %s", error.__class__.__name__)
+        logger.exception("Upload-practice transcription failed")
         raise UploadPracticeError(
             "SPEECH_TRANSCRIPTION_FAILED", "Speech transcription could not finish. Please retry."
         ) from error
@@ -1273,7 +1273,7 @@ def analyze_pose(
     try:
         model = YOLO(settings.upload_practice_pose_model)
     except Exception as error:
-        logger.warning("Upload-practice pose model failed to load: %s", error.__class__.__name__)
+        logger.exception("Upload-practice pose model failed to load")
         raise UploadPracticeError(
             "POSE_MODEL_UNAVAILABLE", "The pose model could not be loaded. Please retry."
         ) from error
@@ -1475,7 +1475,7 @@ def run_upload_practice(session_id: uuid.UUID, source_key: str) -> None:
             completed_at=datetime.now(UTC),
         )
     except UploadPracticeError as error:
-        logger.warning("Upload practice %s failed with %s", session_id, error.code)
+        logger.exception("Upload practice %s failed with %s", session_id, error.code)
         if evidence_directory is not None:
             shutil.rmtree(evidence_directory, ignore_errors=True)
         _update_session(

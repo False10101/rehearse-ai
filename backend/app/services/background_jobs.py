@@ -37,6 +37,16 @@ def fail_job(session, job, message: str) -> None:
 
 
 def run_background_job(job_id: uuid.UUID, task, *args) -> None:
+    try:
+        _run_background_job(job_id, task, *args)
+    except Exception:
+        logger.exception(
+            "Background job infrastructure failed job_id=%s task=%s", job_id, task.__name__
+        )
+        raise
+
+
+def _run_background_job(job_id: uuid.UUID, task, *args) -> None:
     # A dedicated connection holds the lock throughout the task, not its DB sessions.
     with get_engine().connect() as connection:
         key = lock_key(job_id)
@@ -55,6 +65,9 @@ def run_background_job(job_id: uuid.UUID, task, *args) -> None:
                 with get_session_factory()() as session:
                     job = session.get(Job, job_id)
                     if job and job.status in ACTIVE:
+                        logger.error(
+                            "Background job %s returned without a completed result", job_id
+                        )
                         fail_job(session, job, "Processing ended without a completed result.")
                         session.commit()
             except Exception:
