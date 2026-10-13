@@ -24,6 +24,7 @@ from app.db.models import (
     TranscriptRevision,
 )
 from app.db.session import get_db_session, get_session_factory
+from app.services.processing_diagnostics import log_processing_state
 from app.services.transcript_enhancer import (
     TRANSCRIPT_MODEL,
     TRANSCRIPT_PROMPT_VERSION,
@@ -373,6 +374,9 @@ def _response(session: Session, presentation: Presentation) -> TranscriptRespons
         .where(Job.target_id == presentation.id, Job.job_type == "transcript_generate_all")
         .order_by(Job.created_at.desc())
     )
+    log_processing_state(presentation, preparation_job, event="transcript_preparation_response")
+    if bulk_job is not None:
+        log_processing_state(presentation, bulk_job, event="transcript_bulk_status_response")
     return TranscriptResponse(
         presentation_id=presentation.id,
         preparation_progress=preparation_job.progress_percent if preparation_job else None,

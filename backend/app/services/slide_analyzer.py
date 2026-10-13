@@ -36,6 +36,7 @@ from app.db.models import (
     SlideAnalysis,
 )
 from app.db.session import get_session_factory
+from app.services.processing_diagnostics import log_processing_state
 from app.services.slide_design import (
     alignment_evidence,
     deck_style_evidence,
@@ -1415,6 +1416,7 @@ def run_slide_analysis(presentation_id: UUID) -> None:
     try:
         presentation = session.get(Presentation, presentation_id)
         if presentation is None or not presentation.storage_key:
+            logger.error("Slide analysis cannot start: missing presentation/file id=%s", presentation_id)
             return
         job = _latest_job(session, presentation_id, "slide_analysis")
         presentation.status = "processing"
@@ -1423,11 +1425,13 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.progress_percent = 5
             job.started_at = datetime.now().astimezone()
         session.commit()
+        log_processing_state(presentation, job, event="slide_analysis_started")
 
         def report_progress(percent: int) -> None:
             if job:
                 job.progress_percent = percent
                 session.commit()
+            logger.info("Slide analysis progress presentation_id=%s percent=%s", presentation_id, percent)
 
         slide_data, slides_by_number = prepare_presentation_slides(
             session,
@@ -1440,6 +1444,7 @@ def run_slide_analysis(presentation_id: UUID) -> None:
         if not analysis_input:
             raise RuntimeError("The presentation contains no source slides to analyze.")
         result = analyze(analysis_input)
+        logger.info("AI analysis returned presentation_id=%s source_slides=%s", presentation_id, len(analysis_input))
         report_progress(95)
         analysis = PresentationAnalysis(
             presentation_id=presentation.id,
@@ -1497,6 +1502,9 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.progress_percent = 100
             job.completed_at = datetime.now().astimezone()
         session.commit()
+        log_processing_state(
+            presentation, job, event="slide_analysis_saved", analysis=analysis, available=True,
+        )
     except SlideAnalysisGenerationError as error:
         logger.exception("Slide analysis rejected for presentation %s", presentation_id)
         session.rollback()
@@ -1515,6 +1523,8 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.error_message = f"{error} Details: {error.diagnostic or 'Unavailable'}"[:1000]
             job.completed_at = datetime.now().astimezone()
         session.commit()
+        if presentation:
+            log_processing_state(presentation, job, event="slide_analysis_rejected")
     except Exception as error:
         logger.exception("Slide analysis failed for presentation %s", presentation_id)
         session.rollback()
@@ -1529,6 +1539,8 @@ def run_slide_analysis(presentation_id: UUID) -> None:
             job.error_message = str(error)[:1000]
             job.completed_at = datetime.now().astimezone()
         session.commit()
+        if presentation:
+            log_processing_state(presentation, job, event="slide_analysis_failed")
     finally:
         session.close()
 

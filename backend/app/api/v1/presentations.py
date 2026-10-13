@@ -25,6 +25,7 @@ from app.services.agenda_generator import (
     generate_agenda_deck,
 )
 from app.services.agenda_layouts import agenda_catalog
+from app.services.processing_diagnostics import log_processing_state
 from app.services.report_export import feedback_workbook
 from app.services.slide_analyzer import (
     PROMPT_VERSION,
@@ -307,7 +308,10 @@ def analyze_existing_presentation(
             validate_slide_analysis_result(completed_analysis.raw_output, slide_numbers)
             analysis_is_valid = True
         except (ValidationError, ValueError):
-            pass
+            logger.exception(
+                "Stored analysis cannot be reused presentation_id=%s analysis_id=%s",
+                presentation.id, completed_analysis.id,
+            )
     if analysis_is_valid and not (latest_analysis_job and latest_analysis_job.status == "failed"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -370,10 +374,17 @@ def get_presentation(
     )
     analysis_payload: dict[str, Any] | None = None
     analysis_error = presentation.processing_error_code
+    unavailable_reason = "no_completed_analysis" if analysis is None else None
     latest_analysis_failed = bool(
         job and job.job_type == "slide_analysis" and job.status == "failed"
     )
     if analysis and analysis.prompt_version != PROMPT_VERSION:
+        unavailable_reason = "prompt_version_mismatch"
+        logger.warning(
+            "Analysis withheld presentation_id=%s analysis_id=%s "
+            "stored_version=%s current_version=%s",
+            presentation.id, analysis.id, analysis.prompt_version, PROMPT_VERSION,
+        )
         analysis_error = "This analysis uses an older analyzer version. Run Slide Analyzer again."
     elif analysis and not latest_analysis_failed:
         analyzed_slide_numbers = [
@@ -387,11 +398,19 @@ def get_presentation(
                 analyzed_slide_numbers,
             )
         except (ValidationError, ValueError):
-            logger.warning(
-                "Stored slide analysis %s is incomplete and will require regeneration.",
-                analysis.id,
+            logger.exception(
+                "Stored analysis validation failed presentation_id=%s analysis_id=%s "
+                "slide_numbers=%s",
+                presentation.id, analysis.id, analyzed_slide_numbers,
             )
+            unavailable_reason = "stored_analysis_validation_failed"
             analysis_error = "Previous analysis data is incomplete. Run Slide Analyzer again."
+    elif latest_analysis_failed:
+        unavailable_reason = "latest_slide_analysis_job_failed"
+    log_processing_state(
+        presentation, job, event="presentation_status_response", analysis=analysis,
+        available=analysis_payload is not None, reason=unavailable_reason,
+    )
     return PresentationResponse(
         id=presentation.id,
         title=presentation.title,
