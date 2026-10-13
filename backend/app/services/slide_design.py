@@ -1,9 +1,72 @@
 """Conservative PowerPoint style and geometry evidence, not pixel-perfect rendering."""
 
+import logging
+import math
 from collections import Counter
 
 from lxml import etree
 from pptx.oxml.ns import qn
+
+logger = logging.getLogger(__name__)
+
+
+def _rotate_flip(points, center, transform):
+    """Apply DrawingML flips and clockwise rotation in the current coordinate space."""
+    if transform is None:
+        return points
+    angle = math.radians(int(transform.get("rot", "0")) / 60000)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    flip_x = -1 if transform.get("flipH") in ("1", "true") else 1
+    flip_y = -1 if transform.get("flipV") in ("1", "true") else 1
+    result = []
+    for x, y in points:
+        x, y = (x - center[0]) * flip_x, (y - center[1]) * flip_y
+        result.append((center[0] + x * cosine - y * sine,
+                       center[1] + x * sine + y * cosine))
+    return result
+
+
+def shape_geometry(shape):
+    """Retain local bounds and project corners through every parent group."""
+    left, top, width, height = map(int, (shape.left, shape.top, shape.width, shape.height))
+    local = {"left": left, "top": top, "width": width, "height": height}
+    points = [(left, top), (left + width, top),
+              (left + width, top + height), (left, top + height)]
+    transform = shape._element.find("./" + qn("p:spPr") + "/" + qn("a:xfrm"))
+    points = _rotate_flip(points, (left + width / 2, top + height / 2), transform)
+    group_ids = []
+    for parent in shape._element.iterancestors(qn("p:grpSp")):
+        node = parent.find("./" + qn("p:grpSpPr") + "/" + qn("a:xfrm"))
+        identity = parent.find("./" + qn("p:nvGrpSpPr") + "/" + qn("p:cNvPr"))
+        group_ids.append(identity.get("id") if identity is not None else None)
+        if node is None:
+            raise ValueError("Grouped shape has no coordinate transform")
+        off, ext = node.find(qn("a:off")), node.find(qn("a:ext"))
+        child_off, child_ext = node.find(qn("a:chOff")), node.find(qn("a:chExt"))
+        if any(item is None for item in (off, ext, child_off, child_ext)):
+            raise ValueError("Grouped shape has an incomplete coordinate transform")
+        cx, cy = int(child_ext.get("cx")), int(child_ext.get("cy"))
+        x, y = int(off.get("x")), int(off.get("y"))
+        w, h = int(ext.get("cx")), int(ext.get("cy"))
+        if (cx == 0 and w != 0) or (cy == 0 and h != 0):
+            raise ValueError("Grouped shape has a non-projectable coordinate transform")
+        # A group containing only a horizontal/vertical line can legitimately
+        # have zero extent on that axis; its coordinate translation still applies.
+        scale_x, scale_y = w / cx if cx else 1, h / cy if cy else 1
+        origin_x, origin_y = int(child_off.get("x")), int(child_off.get("y"))
+        points = [(x + (px - origin_x) * scale_x, y + (py - origin_y) * scale_y)
+                  for px, py in points]
+        points = _rotate_flip(points, (x + w / 2, y + h / 2), node)
+    rounded = [[round(x), round(y)] for x, y in points]
+    xs, ys = [p[0] for p in rounded], [p[1] for p in rounded]
+    return {
+        "left": min(xs), "top": min(ys),
+        "width": max(xs) - min(xs), "height": max(ys) - min(ys),
+        "local_bounds": local,
+        "coordinate_scope": "group" if group_ids else "slide",
+        "slide_corners": rounded,
+        "parent_group_ids": group_ids,
+    }
 
 
 def _theme(slide):
@@ -117,17 +180,57 @@ def resolved_style(run, paragraph, shape, slide):
 def shape_evidence(shape, slide, index):
     fill = shape._element.find("./" + qn("p:spPr") + "/" + qn("a:solidFill"))
     color = _color(fill[0], _theme(slide)) if fill is not None and len(fill) else None
+    properties = shape._element.find(qn("p:spPr"))
+    preset = properties.find(qn("a:prstGeom")) if properties is not None else None
+    custom = properties.find(qn("a:custGeom")) if properties is not None else None
+    raw_geometry = preset.get("prst") if preset is not None else None
+    geometry = raw_geometry or ("custom" if custom is not None else "other")
+    if shape.shape_type == 1:
+        try:
+            geometry = str(shape.auto_shape_type)
+        except ValueError:
+            logger.warning(
+                "Unmapped shape geometry retained: shape_id=%s geometry=%s",
+                shape.shape_id, raw_geometry,
+            )
+    bounds = shape_geometry(shape)
+    line = properties.find(qn("a:ln")) if properties is not None else None
+    transform = properties.find(qn("a:xfrm")) if properties is not None else None
+    line_data = None
+    if line is not None or raw_geometry == "line":
+        line_data = {
+            "explicit_style_xml": etree.tostring(line, encoding="unicode")
+            if line is not None else None,
+            "style_source": "explicit" if line is not None else "inherited_or_unknown",
+            "head_end": dict(line.find(qn("a:headEnd")).attrib)
+            if line is not None and line.find(qn("a:headEnd")) is not None else None,
+            "tail_end": dict(line.find(qn("a:tailEnd")).attrib)
+            if line is not None and line.find(qn("a:tailEnd")) is not None else None,
+            "explicit_connections": [
+                {"end": etree.QName(node).localname, **dict(node.attrib)}
+                for node in shape._element.iter()
+                if node.tag in (qn("a:stCxn"), qn("a:endCxn"))
+            ],
+            "style_reference_xml": etree.tostring(
+                shape._element.find(qn("p:style")), encoding="unicode"
+            ) if shape._element.find(qn("p:style")) is not None else None,
+        }
+        if raw_geometry == "line":
+            line_data["slide_endpoints"] = [bounds["slide_corners"][0], bounds["slide_corners"][2]]
     return {
         "z_order": index,
-        "left": shape.left,
-        "top": shape.top,
-        "coordinate_scope": "group" if shape._element.getparent().tag == qn("p:grpSp") else "slide",
-        "width": shape.width,
-        "height": shape.height,
+        "shape_id": shape.shape_id,
+        "shape_name": shape.name,
+        "element_type": etree.QName(shape._element).localname,
+        **bounds,
         "fill_color": color,
-        "geometry": str(getattr(shape, "auto_shape_type", "unknown"))
-        if shape.shape_type == 1
-        else "other",
+        "geometry": geometry,
+        "raw_geometry": raw_geometry,
+        "custom_geometry_xml": etree.tostring(custom, encoding="unicode")
+        if custom is not None else None,
+        "line": line_data,
+        "flip_horizontal": transform is not None and transform.get("flipH") in ("1", "true"),
+        "flip_vertical": transform is not None and transform.get("flipV") in ("1", "true"),
         "rotation": shape.rotation,
         "text": shape.text if shape.has_text_frame else "",
     }

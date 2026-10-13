@@ -43,6 +43,7 @@ from app.services.slide_design import (
     overlap_candidates,
     resolved_style,
     shape_evidence,
+    shape_geometry,
     typography_evidence,
 )
 from app.services.slide_review import (
@@ -436,13 +437,8 @@ def _paragraph_is_bullet(paragraph) -> bool:
     )
 
 
-def _shape_geometry(shape) -> dict[str, int]:
-    return {
-        "left": int(shape.left),
-        "top": int(shape.top),
-        "width": int(shape.width),
-        "height": int(shape.height),
-    }
+def _shape_geometry(shape) -> dict:
+    return shape_geometry(shape)
 
 
 def _chart_data(shape) -> dict[str, Any] | None:
@@ -692,6 +688,10 @@ def caption_slide_image(
                             "Check later shapes covering earlier text, inconsistent related card sizes/edges, "
                             "and oversized nonessential slogans competing with actual actions. Geometry is "
                             "text-box geometry, not glyph bounds; intersection alone is not occlusion.\n"
+                            "Bounds and slide_corners use slide coordinates, including nested group "
+                            "transforms; local_bounds are original object coordinates. Line endpoints "
+                            "and head/tail arrowheads are retained. Use the image to confirm links; "
+                            "unrecognized raw geometry does not mean the object is missing.\n"
                             "For each overlap candidate, explicitly state confirmed covered text, "
                             "no visible covered text, or uncertain, with the region and foreground IDs. "
                             "Use the detail crops below when supplied; they show the same slide, not new slides. "
@@ -1093,6 +1093,11 @@ actually needs evidence. Missing references must not generate repeated generic w
 
 VISUAL-DESIGN REVIEW (equal standing with the existing content checks)
 Inspect all six dimensions where observable evidence is available:
+Shape bounds and slide_corners are in slide coordinates, including parent group transforms;
+local_bounds retain original object coordinates. Line slide_endpoints preserve endpoint order,
+with head_end/tail_end describing arrowheads. Use explicit_connections only when provided;
+proximity alone does not establish a flowchart link. Raw/custom geometry remains evidence even
+when the library cannot name the shape. Rotated corners are more precise than bounding boxes.
 Use text_regions.runs for resolved font size/family/color and shape_evidence for known fills,
 positions and drawing order. Unknown metadata is not a defect. Compare related regions within
 each slide and comparable heading/body roles across the deck. Do not treat every style variation
