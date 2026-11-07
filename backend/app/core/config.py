@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     upload_practice_max_evidence_frames: int = 12
     live_target_fps: float = 15.0
     live_calibration_frames: int = 15
-    live_max_session_events: int = 200
 
 
 @lru_cache

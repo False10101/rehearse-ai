@@ -1,17 +1,22 @@
-import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision";
+import type { Detection, Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision";
 
 export type DebugBounds = { x: number; y: number; width: number; height: number };
+
+export type VisibleObject = { label: string; confidence: number; bounds: DebugBounds };
 
 export type LandmarkPoint = [number, number, number, number];
 export type BrowserObservation = {
   person_detected: boolean;
   eyes?: [number, number, number, number];
+  eye_openness?: [number, number];
   head?: [number, number, number];
   face_targets?: [number, number][];
   body?: LandmarkPoint[];
   hands?: LandmarkPoint[][];
   body_updated: boolean;
   hands_updated: boolean;
+  objects?: VisibleObject[];
+  objects_updated?: boolean;
   debug?: Record<string, DebugBounds>;
 };
 
@@ -102,6 +107,11 @@ export function observationFromLandmarks(
       ];
     }
   }
+  const openness = [LEFT_EYE_GEOMETRY, RIGHT_EYE_GEOMETRY].map(({ corners, lids }) => {
+    const [a,b] = corners.map(i=>landmarks[i]), [top,bottom] = lids.map(i=>landmarks[i]);
+    return a && b && top && bottom ? Math.abs(top.y-bottom.y)/Math.max(.001,Math.hypot(a.x-b.x,a.y-b.y)) : NaN;
+  });
+  if (openness.every(Number.isFinite)) observation.eye_openness = [openness[0],openness[1]];
   const leftIris = irisCentre(landmarks, LEFT_IRIS_POINTS);
   const rightIris = irisCentre(landmarks, RIGHT_IRIS_POINTS);
   const left = leftIris ? positionInEye(landmarks, leftIris, LEFT_EYE_GEOMETRY) : null;
@@ -111,4 +121,20 @@ export function observationFromLandmarks(
     observation.face_targets = [13, 33, 263, 10].map((i) => [landmarks[i].x, landmarks[i].y]);
   }
   return observation;
+}
+
+
+// Model boxes use source-image pixels; send only normalised numerical evidence.
+export function objectsFromDetections(detections: Detection[], width: number, height: number): VisibleObject[] {
+  if (width <= 0 || height <= 0) return [];
+  return detections.flatMap(({ boundingBox: box, categories }) => {
+    const category = categories[0];
+    if (!box || !category || category.score < .6) return [];
+    const x = Math.max(0, box.originX / width), y = Math.max(0, box.originY / height);
+    const right = Math.min(1, (box.originX + box.width) / width);
+    const bottom = Math.min(1, (box.originY + box.height) / height);
+    if (right <= x || bottom <= y) return [];
+    return [{ label: category.categoryName, confidence: category.score,
+      bounds: { x, y, width: right - x, height: bottom - y } }];
+  });
 }

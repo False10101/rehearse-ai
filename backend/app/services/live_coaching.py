@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
 from math import atan2, degrees, hypot
 from statistics import median
@@ -25,6 +25,7 @@ class DebugBounds:
 class FrameObservation:
     person_detected: bool
     eyes: tuple[float, float, float, float] | None = None
+    eye_openness: tuple[float, float] | None = None
     head: tuple[float, float, float] | None = None  # yaw, pitch, roll in degrees
     body: list | None = None  # 33 [x,y,z,visibility] points
     hands: list | None = None  # up to two sets of 21 points
@@ -32,6 +33,8 @@ class FrameObservation:
     hands_updated: bool = True
     face_targets: list | None = None  # mouth, left eye, right eye, forehead
     debug: dict | None = None
+    objects: list | None = None
+    objects_updated: bool = False
 
 
 CUES = {
@@ -47,10 +50,11 @@ CUES = {
     "body_bouncing": "Keep your upper body steady",
     "body_rocking": "Keep a steady distance while speaking",
     "posture_drift": "Sit or stand comfortably upright again",
-    "face_obstruction": "Move your hand away from your face",
-    "repeated_face_touching": "Let your hands rest between gestures",
+    "face_obstruction": "Hand covering face",
+    "object_obstruction": "Object blocking face",
+    "repeated_face_touching": "Hand repeatedly moving to face or hair",
     "repetitive_hand_motion": "Let your hands settle between points",
-    "gesture_out_of_view": "Keep your gestures within the camera view",
+    "hand_in_view": "Keep your hands out of the camera view",
 }
 
 
@@ -76,6 +80,8 @@ class LiveCoachingTracker:
         self.baselines = {}
         self.samples = {}
         self.events = []
+        self.next_event_id = 1
+        self.hold_directions = {}
         self.active = {}
         self.pending = {}
         self.recovery = {}
@@ -90,6 +96,9 @@ class LiveCoachingTracker:
         self.body_text = "Not assessed"
         self.hands_text = "Not assessed"
         self.frames = 0
+        self.last_face = None
+        self.objects = []
+        self.last_objects_at = None
 
     def _calibrate(self, category, values, required, spread):
         if category in self.baselines:
@@ -98,32 +107,59 @@ class LiveCoachingTracker:
         samples.append(values)
         if len(samples) < required:
             return None
-        if any(
+        baseline = tuple(median(s[i] for s in samples) for i in range(len(values)))
+        if category == "eyes":
+            # Brief glances and blink recovery are outliers, not reasons to
+            # restart neutral calibration indefinitely.
+            if any(
+                median(abs(s[i] - baseline[i]) for s in samples) > spread[i] / 4
+                for i in range(len(values))
+            ):
+                return None
+        elif any(
             max(s[i] for s in samples) - min(s[i] for s in samples) > spread[i]
             for i in range(len(values))
         ):
             return None
-        baseline = tuple(median(s[i] for s in samples) for i in range(len(values)))
         self.baselines[category] = baseline
         return baseline
 
-    def _hold(self, kind, condition, now, seconds, evidence, title=None, recovery_seconds=0.3):
+    def _hold(
+        self,
+        kind,
+        condition,
+        now,
+        seconds,
+        evidence,
+        title=None,
+        recovery_seconds=0.3,
+        direction_key=None,
+    ):
         if condition is None:
             self._close(kind, now)
             self.pending.pop(kind, None)
+            self.hold_directions.pop(kind, None)
             return
         if condition:
+            if direction_key is not None:
+                previous = self.hold_directions.get(kind)
+                if previous is not None and previous != direction_key:
+                    self._close(kind, now)
+                    self.pending.pop(kind, None)
+                self.hold_directions[kind] = direction_key
             self.recovery.pop(kind, None)
             start = self.pending.setdefault(kind, now)
             if round(now - start, 3) >= seconds:
                 if kind not in self.active:
                     event = dict(
+                        id=self.next_event_id,
                         kind=kind,
                         start=start,
                         end=None,
                         title=title or CUES[kind],
                         evidence=evidence,
                     )
+                    self.next_event_id += 1
                     self.events.append(event)
                     self.active[kind] = event
                 self.active[kind].update(evidence=evidence, title=title or CUES[kind])
@@ -131,6 +167,7 @@ class LiveCoachingTracker:
             start = self.recovery.setdefault(kind, now)
             if round(now - start, 3) >= recovery_seconds:
                 self.pending.pop(kind, None)
+                self.hold_directions.pop(kind, None)
                 self._close(kind, start)
 
     def _close(self, kind, now):
@@ -139,13 +176,22 @@ class LiveCoachingTracker:
             event["end"] = max(event["start"], now)
         self.recovery.pop(kind, None)
 
-    def _pulse(self, kind, start, now, evidence, cooldown=4.0):
-        if now - self.last_pulse.get(kind, float("-inf")) < cooldown:
+    def _pulse(self, kind, start, now, evidence, cooldown=4.0, cooldown_key=None):
+        key = cooldown_key or kind
+        if now - self.last_pulse.get(key, float("-inf")) < cooldown:
             return
-        self.last_pulse[kind] = now
+        self.last_pulse[key] = now
         self.events.append(
-            dict(kind=kind, start=start, end=now, title=CUES[kind], evidence=evidence)
+            dict(
+                id=self.next_event_id,
+                kind=kind,
+                start=start,
+                end=now,
+                title=CUES[kind],
+                evidence=evidence,
+            )
         )
+        self.next_event_id += 1
         self.pulse_cue = (now + 1.5, CUES[kind])
 
     def _direction_runs(self, channel, value, now):
@@ -162,6 +208,7 @@ class LiveCoachingTracker:
                 missing_since = self.motion.setdefault(missing_key, now)
                 if now - missing_since > 0.35:
                     self.runs.pop(channel, None)
+                    self.motion.pop("eye_direction", None)
             else:
                 self.runs.pop(channel, None)
                 history.clear()
@@ -179,31 +226,55 @@ class LiveCoachingTracker:
             return
         current = self.runs.get(channel)
         if current and current[0] == value:
+            if channel == "eyes":
+                self.motion["eye_run_samples"] = self.motion.get("eye_run_samples", 1) + 1
             return
+        samples = self.motion.get("eye_run_samples", 0) if channel == "eyes" else 0
+        if channel == "eyes":
+            self.motion["eye_run_samples"] = 1
         self.runs[channel] = candidate
         if current is None:
             return
         old, start = current
         end = candidate[1]
-        history.append((start, end, old))
+        history.append((start, end, old, value == "centre", samples))
         minimum = 0 if channel == "eyes" else 0.18
-        glances = [r for r in history if r[2] != "centre" and minimum < r[1] - r[0] <= 1.5]
-        same = Counter(r[2] for r in glances)
-        if same:
-            side, count = same.most_common(1)[0]
-            if count >= 3:
-                kind = "repeated_glances" if channel == "eyes" else "repeated_head_turns"
-                self._pulse(
-                    kind, glances[0][0], now, f"{count} glances {side.replace('_', ' ')} in 10s"
-                )
+        glances = [
+            r
+            for r in history
+            if r[2] != "centre"
+            and minimum < r[1] - r[0] <= 1.5
+            and (channel != "eyes" or (r[3] and r[4] >= 2))
+        ]
+        matching = [r for r in glances if r[2] == old]
+        # Only the just-completed glance can add to a repetition report.
+        # A later glance elsewhere must not replay an older direction's count.
+        completed_glance = channel != "eyes" or (value == "centre" and samples >= 2)
+        if (
+            completed_glance
+            and old != "centre"
+            and minimum < end - start <= 1.5
+            and len(matching) >= 3
+        ):
+            kind = "repeated_glances" if channel == "eyes" else "repeated_head_turns"
+            movement = "glances" if channel == "eyes" else "head turns"
+            self._pulse(
+                kind,
+                matching[0][0],
+                now,
+                f"{len(matching)} {movement} {old.replace('_', ' ')} in 10s",
+                cooldown_key=f"{kind}:{old}",
+            )
         if channel == "eyes":
-            recent = [r for r in history if r[1] >= now - 8]
-            if len(recent) >= 6 and len({r[2] for r in recent if r[2] != "centre"}) >= 3:
+            # Count a rapid burst of off-centre changes, not ordinary spaced
+            # glances and their returns to forward.
+            recent = [r for r in history if r[1] >= now - 3 and r[2] != "centre" and r[4] >= 2]
+            if len(recent) >= 4 and len({r[2] for r in recent}) >= 3:
                 self._pulse(
                     "gaze_switching",
                     recent[0][0],
                     now,
-                    f"{len(recent)} eye-direction changes in 8s",
+                    f"{len(recent)} eye-direction changes in 3s",
                 )
 
     def _oscillation(self, key, value, now, amplitude, window, reversals):
@@ -231,10 +302,19 @@ class LiveCoachingTracker:
             return turns[0], len(turns)
         return None
 
-    def _reset_motion(self, now):
+    def _reset_motion(self, now, preserve_object=False):
         for kind in list(self.active):
-            self._close(kind, now)
+            if not (preserve_object and kind == "object_obstruction"):
+                self._close(kind, now)
+        object_start = self.pending.get("object_obstruction") if preserve_object else None
         self.pending.clear()
+        if object_start is not None:
+            self.pending["object_obstruction"] = object_start
+        if not preserve_object:
+            self.last_face = None
+            self.objects = []
+            self.last_objects_at = None
+        self.hold_directions.clear()
         self.recovery.clear()
         self.runs.clear()
         self.candidates.clear()
@@ -255,29 +335,51 @@ class LiveCoachingTracker:
             return None, "Calibrating", None
         yaw, pitch, roll = [a - b for a, b in zip(angles, base)]
         magnitudes = (abs(yaw) / 15, abs(pitch) / 12, abs(roll) / 12)
-        axis = magnitudes.index(max(magnitudes))
         side = "centre"
-        if max(magnitudes) > 0.65:
-            side = (
-                ("left" if yaw > 0 else "right"),
-                ("up" if pitch > 0 else "down"),
-                ("tilt_right" if roll > 0 else "tilt_left"),
-            )[axis]
+        # Keep small natural adjustments forward-facing. Roll is a sideways
+        # lean; yaw + pitch together describe an actual diagonal turn.
+        horizontal, vertical, lean = magnitudes
+        if lean >= 1 and lean > max(horizontal, vertical):
+            side = "tilt_right" if roll > 0 else "tilt_left"
+        elif max(horizontal, vertical) >= 1:
+            left_right = "left" if yaw > 0 else "right"
+            up_down = "up" if pitch > 0 else "down"
+            previous = self.motion.get("head_direction", "centre")
+            was_diagonal = previous in {"up_left", "up_right", "down_left", "down_right"}
+            ratio = min(horizontal, vertical) / max(horizontal, vertical)
+            if ratio >= (0.4 if was_diagonal else 0.6):
+                side = up_down + "_" + left_right
+            else:
+                side = left_right if horizontal >= vertical else up_down
+        self.motion["head_direction"] = side
         text = {
             "centre": "Facing forward",
             "up": "Tilted up",
             "down": "Tilted down",
             "tilt_left": "Leaning head left",
             "tilt_right": "Leaning head right",
-        }.get(side, f"Turned {side}")
+        }.get(side, f"Turned {side.replace('_', '-')}")
         self._direction_runs("head", side, now)
-        for key, scalar, amp, count, label in (
-            ("head_shaking", yaw, 12, 2, "sideways reversals"),
-            ("head_nodding", pitch, 10, 3, "up/down reversals"),
+        for key, scalar, amp, window, label in (
+            ("head_shaking", yaw, 12, 1.5, "sideways"),
+            ("head_nodding", pitch, 10, 2, "up/down"),
         ):
-            result = self._oscillation(key, scalar, now, amp, 2.0, count)
-            if result:
-                self._pulse(key, result[0], now, f"{result[1]} {label} in 2s", cooldown=2)
+            # A return to forward is not an opposite turn. A repeated shake
+            # or nod must alternate clearly across the neutral position.
+            side_sign = 1 if scalar >= amp else -1 if scalar <= -amp else 0
+            turns = self.motion.setdefault(key, deque())
+            while turns and turns[0][0] < now - window:
+                turns.popleft()
+            if side_sign and (not turns or turns[-1][1] != side_sign):
+                turns.append((now, side_sign))
+                if len(turns) >= 3:
+                    self._pulse(
+                        key,
+                        turns[0][0],
+                        now,
+                        f"{len(turns)} alternating {label} movements in {window:g}s",
+                        cooldown=2,
+                    )
         previous = self.motion.get("head_speed")
         jolts = self.motion.setdefault("head_jolts", deque())
         if previous:
@@ -296,29 +398,108 @@ class LiveCoachingTracker:
             "down": "Lift your chin slightly",
             "tilt_left": "Level your head",
             "tilt_right": "Level your head",
+            "up_left": "Lower your chin and face forward",
+            "up_right": "Lower your chin and face forward",
+            "down_left": "Lift your chin and face forward",
+            "down_right": "Lift your chin and face forward",
         }.get(side, CUES["head_position"])
-        self._hold("head_position", max(magnitudes) >= 1, now, 2, text, cue)
+        self._hold("head_position", max(magnitudes) >= 1, now, 2, text, cue, direction_key=side)
         return side, text, (yaw, pitch, roll)
 
-    def _eyes(self, eyes, head, now):
-        if eyes is None or head is None:
-            return None, "Not assessed"
-        if max(abs(head[0]) / 15, abs(head[1]) / 12, abs(head[2]) / 12) > 0.65:
+    def _eyes(self, eyes, head, now, openness=None):
+        if head is not None and max(abs(head[0]) / 15, abs(head[1]) / 12, abs(head[2]) / 12) >= 1:
+            self.motion.pop("eye_direction", None)
             return None, "Head turned or tilted"
+        if openness is not None:
+            samples = self.samples.setdefault("eye_open", deque(maxlen=30))
+            samples.append(openness)
+            reference = self.baselines.get("eye_open") or tuple(
+                median(s[i] for s in samples) for i in (0, 1)
+            )
+            if any(value < max(0.12, normal * 0.7) for value, normal in zip(openness, reference)):
+                # Closing lids distort vertical iris estimates. Discard only
+                # this unfinished vertical excursion, not completed glances.
+                previous_side = self.motion.get("eye_direction", "centre")
+                if "up" in previous_side or "down" in previous_side:
+                    self.runs.pop("eyes", None)
+                    self.candidates.pop("eyes", None)
+                    self.motion.pop("eye_direction", None)
+                    self.motion.pop("eye_run_samples", None)
+                self.motion["eye_reopen_samples"] = 0
+                if eyes is None or min(openness) < 0.12:
+                    self.motion["eye_narrow_since"] = now
+                    return None, "Not assessed"
+                since = self.motion.setdefault("eye_narrow_since", now)
+                if now - since < 0.25:
+                    return None, "Not assessed"
+                self.motion.pop("eye_reopen_samples", None)
+            else:
+                self.motion.pop("eye_narrow_since", None)
+            if "eye_reopen_samples" in self.motion:
+                if any(value < normal * 0.9 for value, normal in zip(openness, reference)):
+                    self.motion["eye_reopen_samples"] = 0
+                    return None, "Not assessed"
+                self.motion["eye_reopen_samples"] += 1
+                if self.motion["eye_reopen_samples"] < 2:
+                    return None, "Not assessed"
+                self.motion.pop("eye_reopen_samples")
+        if eyes is None:
+            return None, "Not assessed"
+        # Collect eye calibration alongside head calibration rather than
+        # discarding the initial forward-looking eye samples.
         base = self._calibrate(
             "eyes", eyes, self.settings.live_calibration_frames, (0.08, 0.1, 0.08, 0.1)
         )
+        if base is not None and openness is not None and "eye_open" not in self.baselines:
+            self.baselines["eye_open"] = reference
+        if head is None:
+            return None, "Not assessed"
         if base is None:
             return None, "Calibrating"
         lx, ly, rx, ry = [a - b for a, b in zip(eyes, base)]
-        if hypot((lx - rx) / 0.08, (ly - ry) / 0.1) > 1.5:
-            return None, "Eye direction unclear"
         x, y = (lx + rx) / 0.16, (ly + ry) / 0.2
-        side = direction(x, y)
-        # A corner is its own direction, rather than alternating between up
-        # and left as one component becomes slightly larger than the other.
-        if side != "centre" and min(abs(x), abs(y)) >= max(abs(x), abs(y)) * 0.5:
-            side = ("down" if y > 0 else "up") + "_" + ("left" if x > 0 else "right")
+        horizontal_agrees = abs(lx - rx) / 0.08 <= 1.5
+        vertical_agrees = abs(ly - ry) / 0.1 <= 1.5
+        # A noisy vertical iris estimate must not discard clear agreement on a
+        # sideways glance (and vice versa). Never infer forward from an
+        # unreliable axis.
+        if not horizontal_agrees:
+            x = 0
+        if not vertical_agrees:
+            y = 0
+        if (not horizontal_agrees or not vertical_agrees) and max(abs(x), abs(y)) < 1.1:
+            return None, "Eye direction unclear"
+        previous = self.motion.get("eye_direction", "centre")
+        if (not horizontal_agrees and ("left" in previous or "right" in previous)) or (
+            not vertical_agrees and ("up" in previous or "down" in previous)
+        ):
+            previous = "centre"
+        peak = max(abs(x), abs(y))
+        # Separate entry/return boundaries stop normal landmark jitter from
+        # generating a series of glances. This is spatial, not a dwell timer.
+        if peak <= 0.55:
+            side = "centre"
+        elif peak < 1.1:
+            side = previous
+            if (
+                ("left" in side and x < 0)
+                or ("right" in side and x > 0)
+                or ("up" in side and y > 0)
+                or ("down" in side and y < 0)
+            ):
+                side = "centre"
+        else:
+            horizontal = "left" if x > 0 else "right"
+            vertical = "down" if y > 0 else "up"
+            ratio = min(abs(x), abs(y)) / peak
+            # A corner stays a corner across modest angle noise.
+            corner = ratio >= (0.35 if "_" in previous else 0.6)
+            side = (
+                vertical + "_" + horizontal
+                if corner
+                else (horizontal if abs(x) >= abs(y) else vertical)
+            )
+        self.motion["eye_direction"] = side
         return side, "Looking forward" if side == "centre" else f"Looking {side.replace('_', ' ')}"
 
     def _body(self, points, targets, now):
@@ -389,25 +570,30 @@ class LiveCoachingTracker:
                 self.motion.pop(key, None)
 
     def _hands(self, hands, targets, shoulder_width, now):
+        # A detected hand counts anywhere inside the image, not just at an
+        # edge. Ignore coordinates extrapolated entirely outside the image.
+        hands = [
+            hand
+            for hand in (hands or [])
+            if any(0 <= p[0] <= 1 and 0 <= p[1] <= 1 and p[3] >= 0.5 for p in hand)
+        ]
         if not hands:
             self.hands_text = "Not assessed"
             self._hold("face_obstruction", None, now, 0.5, "")
-            self._hold("gesture_out_of_view", None, now, 1, "")
+            self._hold("hand_in_view", None, now, 0, "")
             self.motion.pop("repetitive_hand_motion", None)
             for key in list(self.motion):
-                if key.startswith(("hand_motion_", "hand_rubbing", "touch", "gesture_edge")):
+                if key.startswith(("hand_motion_", "hand_rubbing", "touch")):
                     self.motion.pop(key, None)
             return
         self.hands_text = "In view"
         covering = touching = False
         span = shoulder_width or 0.3
         centres = []
-        outside = False
         for hand in hands:
             palm = [hand[i] for i in (0, 5, 9, 13, 17)]
             centre = (sum(p[0] for p in palm) / 5, sum(p[1] for p in palm) / 5)
             centres.append(centre)
-            outside |= any(p[0] < 0.02 or p[0] > 0.98 or p[1] < 0.02 or p[1] > 0.98 for p in hand)
             if targets:
                 face_width = (
                     hypot(targets[1][0] - targets[2][0], targets[1][1] - targets[2][1]) * 1.8
@@ -423,22 +609,23 @@ class LiveCoachingTracker:
                     for p in palm
                     for t in targets[:3]
                 )
-        self._hold("face_obstruction", covering, now, 0.5, "Hand across mouth or eye area")
-        self._hold("gesture_out_of_view", outside, now, 1, "Gesture crossing camera edge")
-        was_outside = self.motion.get("gesture_edge_state", False)
-        edges = self.motion.setdefault("gesture_edges", deque())
-        while edges and edges[0] < now - 8:
-            edges.popleft()
-        if outside and not was_outside:
-            edges.append(now)
-            if len(edges) >= 2:
-                self._pulse(
-                    "gesture_out_of_view",
-                    edges[0],
-                    now,
-                    f"{len(edges)} gestures crossing the camera edge in 8s",
-                )
-        self.motion["gesture_edge_state"] = outside
+        if "object_obstruction" in self.pending:
+            covering = touching = False
+        self._hold(
+            "face_obstruction",
+            covering,
+            now,
+            0.5,
+            "Hand across mouth or eye area",
+        )
+        self._hold(
+            "hand_in_view",
+            True,
+            now,
+            0,
+            "Hand visible in the camera frame",
+            recovery_seconds=0,
+        )
         # Require a stable approach and withdrawal, so boundary jitter is not
         # counted as several separate hand-to-face movements.
         state = self.motion.setdefault(
@@ -485,11 +672,63 @@ class LiveCoachingTracker:
                     "Repeated movement with hands held together",
                 )
         if covering:
-            self.hands_text = "Near mouth or eyes"
+            self.hands_text = "Hand covering face"
         elif touching:
             self.hands_text = "Near face or hair"
-        elif outside:
-            self.hands_text = "Gesture outside view"
+
+    def _object_obstruction(self, observation, now):
+        face = (observation.debug or {}).get("face")
+        if observation.person_detected and face:
+            self.last_face = (now, face, observation.face_targets)
+        if observation.objects_updated:
+            self.objects = observation.objects or []
+            self.last_objects_at = now
+        # Face loss alone is never evidence of an object. A recently observed
+        # face can bridge a short period when an actual object hides landmarks.
+        recent_face = self.last_face and now - self.last_face[0] <= 2
+        fresh_objects = self.last_objects_at is not None and now - self.last_objects_at <= 0.8
+        blocking = None
+        if recent_face and fresh_objects:
+            _, face, targets = self.last_face
+            area = face["width"] * face["height"]
+            for obj in self.objects:
+                if obj["label"] == "person" or obj["confidence"] < 0.6:
+                    continue
+                box = obj["bounds"]
+                overlap = max(
+                    0,
+                    min(face["x"] + face["width"], box["x"] + box["width"])
+                    - max(face["x"], box["x"]),
+                ) * max(
+                    0,
+                    min(face["y"] + face["height"], box["y"] + box["height"])
+                    - max(face["y"], box["y"]),
+                )
+                # Ignore distant/background boxes and objects beside the face.
+                covers_feature = targets and any(
+                    box["x"] <= x <= box["x"] + box["width"]
+                    and box["y"] <= y <= box["y"] + box["height"]
+                    for x, y in targets[:3]
+                )
+                if (
+                    area > 0
+                    and overlap / area >= 0.2
+                    and box["width"] * box["height"] <= area * 6
+                    and covers_feature
+                ):
+                    blocking = obj
+                    break
+        if blocking:
+            # A held phone/cup must not be labelled as the hand holding it.
+            self._hold("face_obstruction", None, now, 0.5, "")
+        self._hold(
+            "object_obstruction",
+            bool(blocking) if fresh_objects and recent_face else None,
+            now,
+            0.5,
+            f"{blocking['label'].capitalize()} across the face" if blocking else "",
+            recovery_seconds=0,
+        )
 
     def process(self, observation, sequence, timestamp_ms, processing_latency_ms):
         now = timestamp_ms / 1000
@@ -499,13 +738,21 @@ class LiveCoachingTracker:
             self._reset_motion(self.previous)
         self.previous = now
         self.frames += 1
+        self._object_obstruction(observation, now)
         if not observation.person_detected:
-            self._reset_motion(now)
+            self._reset_motion(now, preserve_object=True)
             head_side, head_text, head_delta = None, "Not assessed", None
             eye_side, eye_text = None, "Not assessed"
         else:
             head_side, head_text, head_delta = self._head(observation.head, now)
-            eye_side, eye_text = self._eyes(observation.eyes, head_delta, now)
+            eye_side, eye_text = self._eyes(
+                observation.eyes, head_delta, now, observation.eye_openness
+            )
+            if head_side not in {None, "centre"}:
+                # This is a head movement, not an eye-only glance. Keep older
+                # completed glances, but do not finish this movement as one.
+                self.runs.pop("eyes", None)
+                self.candidates.pop("eyes", None)
             self._direction_runs("eyes", eye_side, now)
             eye_title = {"up": "Lower your gaze", "down": "Raise your gaze"}.get(
                 eye_side, CUES["eye_away"]
@@ -518,6 +765,7 @@ class LiveCoachingTracker:
                 eye_text,
                 eye_title,
                 recovery_seconds=0,
+                direction_key=eye_side,
             )
             if head_side is None:
                 self._direction_runs("head", None, now)
@@ -551,17 +799,6 @@ class LiveCoachingTracker:
         calibrated = "head" in self.baselines and "eyes" in self.baselines
         if not calibrated:
             cue = "Face forward and look at the camera marker"
-        elif (
-            eye_side is None
-            and head_side in {None, "centre"}
-            and not self.active
-            and self.pulse_cue[0] <= now
-        ):
-            cue = "Continue naturally"  # No invented eye direction from uncertain landmarks.
-        if len(self.events) > self.settings.live_max_session_events:
-            closed = [event for event in self.events if event["end"] is not None]
-            if closed:
-                self.events.remove(closed[0])
         data = dict(
             type="feedback",
             sequence=sequence,
@@ -582,38 +819,25 @@ class LiveCoachingTracker:
         return LiveFeedback(data)
 
     def _events(self, now):
-        groups = []
-        end = float("-inf")
-        for event in sorted(self.events, key=lambda e: e["start"]):
-            finish = now if event["end"] is None else event["end"]
-            if not groups or event["start"] > end:
-                groups.append([])
-                end = finish
-            else:
-                end = max(end, finish)
-            groups[-1].append(event)
-        messages = []
-        for group in groups:
-            active = [e for e in group if e["end"] is None]
-            primary = (active or group)[-1]
-            start = min(e["start"] for e in group)
-            finish = max(now if e["end"] is None else e["end"] for e in group)
-            evidence = list(dict.fromkeys(e["evidence"] for e in group))
-            messages.append(
-                dict(
-                    kind=primary["kind"],
-                    title=primary["title"],
-                    evidence=" · ".join(evidence),
-                    started_at_seconds=round(start - self.started, 1),
-                    duration_seconds=round(finish - start, 1),
-                    active=bool(active),
-                    signals=[
-                        dict(kind=e["kind"], title=e["title"], evidence=e["evidence"])
-                        for e in group
-                    ],
-                )
+        # Each detection keeps its own row and identity throughout the session.
+        # Simultaneous body/hand/head events never overwrite an eye event.
+        return [
+            dict(
+                id=event["id"],
+                kind=event["kind"],
+                title=event["title"],
+                evidence=event["evidence"],
+                started_at_seconds=round(event["start"] - self.started, 1),
+                duration_seconds=round(
+                    (now if event["end"] is None else event["end"]) - event["start"], 1
+                ),
+                active=event["end"] is None,
+                signals=[
+                    dict(kind=event["kind"], title=event["title"], evidence=event["evidence"])
+                ],
             )
-        return messages
+            for event in self.events
+        ]
 
     def pause(self, timestamp_ms):
         now = timestamp_ms / 1000

@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import type { FaceLandmarker, PoseLandmarker, HandLandmarker } from "@mediapipe/tasks-vision";
+import type { FaceLandmarker, PoseLandmarker, HandLandmarker, ObjectDetector } from "@mediapipe/tasks-vision";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { Brand } from "@/components/brand";
-import { observationFromLandmarks, type DebugBounds } from "@/lib/live-observation";
+import { observationFromLandmarks, objectsFromDetections, type DebugBounds } from "@/lib/live-observation";
 
 type Stage = "setup" | "calibrate" | "live" | "paused";
 type Permission = "idle" | "requesting" | "granted" | "denied" | "unavailable";
@@ -20,6 +20,7 @@ type LiveDebug = {
 };
 
 type SessionEvent = {
+  id: number;
   kind: string;
   title: string;
   evidence: string;
@@ -72,15 +73,16 @@ function sessionEvents(value: unknown): SessionEvent[] {
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const event = item as Record<string, unknown>;
-    if (typeof event.kind !== "string" || typeof event.title !== "string" || typeof event.evidence !== "string"
+    if (typeof event.id !== "number" || typeof event.kind !== "string" || typeof event.title !== "string" || typeof event.evidence !== "string"
       || typeof event.started_at_seconds !== "number" || typeof event.duration_seconds !== "number"
       || typeof event.active !== "boolean") return [];
-    return [{ kind: event.kind, title: event.title, evidence: event.evidence,
+    return [{ id: event.id, kind: event.kind, title: event.title, evidence: event.evidence,
       startedAtSeconds: event.started_at_seconds, durationSeconds: event.duration_seconds, active: event.active }];
   });
 }
 
 function eventEvidence(event: SessionEvent) {
+  if (event.kind === "repeated_glances" || event.kind === "gaze_switching") return event.evidence;
   return `${event.evidence} · ${event.durationSeconds.toFixed(1)}s${event.active ? " · now" : ""}`;
 }
 
@@ -101,6 +103,8 @@ export default function LivePracticePage() {
   const frameTimerRef = useRef<number | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
+  const objectDetectorRef = useRef<ObjectDetector | null>(null);
+  const lastObjectSampleRef = useRef(0);
   const lastBodySampleRef = useRef(0);
   const lastVideoTimeRef = useRef(-1);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -199,7 +203,7 @@ export default function LivePracticePage() {
     if (faceLandmarkerRef.current) return faceLandmarkerRef.current;
     if (!faceLandmarkerLoadingRef.current) {
       faceLandmarkerLoadingRef.current = (async () => {
-        const { FaceLandmarker, PoseLandmarker, HandLandmarker, FilesetResolver } = await import("@mediapipe/tasks-vision");
+        const { FaceLandmarker, PoseLandmarker, HandLandmarker, ObjectDetector, FilesetResolver } = await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
         const landmarker = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: {
@@ -222,10 +226,16 @@ export default function LivePracticePage() {
             baseOptions: { delegate: "CPU", modelAssetPath: "/mediapipe/hand_landmarker.task" },
             runningMode: "VIDEO", numHands: 2,
           });
+          objectDetectorRef.current = await ObjectDetector.createFromOptions(vision, {
+            baseOptions: { delegate: "CPU", modelAssetPath: "/mediapipe/efficientdet_lite0.tflite" },
+            runningMode: "VIDEO", scoreThreshold: .6, maxResults: 10,
+          });
         } catch (error) {
           landmarker.close();
           poseLandmarkerRef.current?.close();
           poseLandmarkerRef.current = null;
+          handLandmarkerRef.current?.close();
+          handLandmarkerRef.current = null;
           throw error;
         }
         faceLandmarkerRef.current = landmarker;
@@ -358,8 +368,15 @@ export default function LivePracticePage() {
         body = poseLandmarkerRef.current?.detectForVideo(video, timestamp).landmarks[0];
         hands = handLandmarkerRef.current?.detectForVideo(video, timestamp).landmarks;
       }
+      const updateObjects = timestamp - lastObjectSampleRef.current >= 500;
+      let objects;
+      if (updateObjects) {
+        lastObjectSampleRef.current = timestamp;
+        const detections = objectDetectorRef.current?.detectForVideo(video, timestamp).detections ?? [];
+        objects = objectsFromDetections(detections, video.videoWidth, video.videoHeight);
+      }
       sequenceRef.current += 1;
-      socket.send(JSON.stringify({ type: "observation", sequence: sequenceRef.current, timestamp_ms: Date.now(),
+      socket.send(JSON.stringify({ objects, objects_updated: updateObjects, type: "observation", sequence: sequenceRef.current, timestamp_ms: Date.now(),
         ...observationFromLandmarks(result.faceLandmarks[0], result.facialTransformationMatrixes[0], body, hands, updateBody, updateBody) }));
     } catch (error) {
       console.error("Live landmark processing failed", error);
@@ -395,7 +412,7 @@ export default function LivePracticePage() {
     return () => window.clearInterval(timer);
   }, [connection, stage]);
 
-  useEffect(() => () => { stopStreaming(); stopCamera(); faceLandmarkerRef.current?.close(); poseLandmarkerRef.current?.close(); handLandmarkerRef.current?.close(); }, []);
+  useEffect(() => () => { stopStreaming(); stopCamera(); faceLandmarkerRef.current?.close(); poseLandmarkerRef.current?.close(); handLandmarkerRef.current?.close(); objectDetectorRef.current?.close(); }, []);
 
   const isSessionActive = stage === "live" || stage === "paused";
   const statusLabel = stage === "paused" ? "Paused" : stage === "live" ? "Live coaching" : stage === "calibrate" ? "Camera check" : "Ready";
@@ -445,8 +462,8 @@ export default function LivePracticePage() {
         </section>
 
         <aside className="grid content-start gap-4">
-          {!isSessionActive ? <section className="rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">{stage === "calibrate" ? "Calibration" : "Before you begin"}</p><h2 className="mb-0 mt-2 text-[1.18rem] tracking-[-0.05em]">{stage === "calibrate" ? "Frame yourself comfortably" : "Practice with clarity"}</h2><p className="mb-0 mt-3 text-[0.78rem] leading-6 text-[#676574]">{stage === "calibrate" ? "Use the outline as a visual comfort guide—not a measured score. Keep your face and both eyes visible, with a little space above your head." : "Start with a local camera check. Live coaching measures observable delivery signals, not personality or emotion."}</p><ol className="mb-0 mt-5 grid list-none gap-3 p-0">{["Face a stable light source", "Keep both eyes visible", "Place the camera at eye level"].map((item, index) => <li className="grid grid-cols-[22px_1fr] items-start gap-2 text-[0.73rem] leading-5 text-[#4f4d5c]" key={item}><span className="grid h-[22px] w-[22px] place-items-center rounded-[7px] bg-[#f0edff] text-[0.62rem] font-extrabold text-[#6652e6]">0{index + 1}</span>{item}</li>)}</ol></section> : <><section className={`rounded-2xl border p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)] ${stage === "paused" ? "border-[#e5e3eb] bg-white" : "border-[#dad4ff] bg-[#faf9ff]"}`}><div className="flex items-start justify-between gap-3"><div><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">Current coaching cue</p><h2 className="mb-0 mt-2 text-[1.08rem] leading-[1.15] tracking-[-0.045em]">{stage === "paused" ? "Session paused" : feedback?.prompt ?? "Waiting for the first frame"}</h2></div><span className={`grid h-9 w-9 place-items-center rounded-xl text-[1rem] ${stage === "paused" ? "bg-[#f0eff3] text-[#85818f]" : "bg-[#e9e4ff] text-[#6652e6]"}`}>{stage === "paused" ? "Ⅱ" : "✦"}</span></div><p className="mb-0 mt-3 text-[0.77rem] leading-6 text-[#686574]">{stage === "paused" ? "Resume when you’re ready." : feedback?.personDetected === false ? "Tracking is paused until you return." : "Keep presenting naturally. Your coaching updates will appear here."}</p></section><section className="rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><div className="flex items-center justify-between"><h2 className="m-0 text-[0.86rem] tracking-[-0.025em]">Live coaching</h2><span className={`rounded-full px-2 py-1 text-[0.59rem] font-bold ${connection === "connected" ? "bg-[#e8f9ef] text-[#198b50]" : "bg-[#fff2dc] text-[#a86612]"}`}>{stage === "paused" ? "Paused" : connection === "connected" ? "Live" : "Connecting"}</span></div><dl className="mb-0 mt-4 grid divide-y divide-[#edecf1]">{([['eyes', 'Eyes'], ['head', 'Head'], ['body', 'Body'], ['hands', 'Hands']] as const).map(([key, label]) => <div className="flex items-center justify-between gap-3 py-3" key={key}><dt className="text-[0.72rem] font-semibold text-[#777483]">{label}</dt><dd className="m-0 text-right text-[0.75rem] font-semibold text-[#514965]">{feedback?.status[key] ?? 'Waiting'}</dd></div>)}</dl></section></>}
-          {isSessionActive ? <section className="overflow-hidden rounded-2xl border border-[#e4e3e9] bg-white shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><div className="flex items-center justify-between border-b border-[#edecf1] px-5 py-4"><div><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">Session events</p><h2 className="mb-0 mt-1 text-[0.92rem] tracking-[-0.03em]">Coaching moments</h2></div><span className="rounded-full bg-[#f0edff] px-2 py-1 text-[0.61rem] font-bold text-[#6452df]">{feedback?.sessionEvents.length ?? 0}</span></div>{feedback?.sessionEvents.length ? <ol className="m-0 grid max-h-56 list-none gap-0 overflow-y-auto p-0">{[...feedback.sessionEvents].reverse().map((event, index) => <li className="grid grid-cols-[9px_minmax(0,1fr)] gap-3 border-b border-[#f0eff3] px-5 py-3 last:border-b-0" key={`${event.startedAtSeconds}-${index}`}><span className={`mt-1.5 h-2 w-2 rounded-full ${event.active ? "bg-[#f39a31] shadow-[0_0_0_4px_#fff0dc]" : "bg-[#a6a2b2]"}`} /><div className="min-w-0"><div className="flex items-baseline justify-between gap-3"><p className="m-0 text-[0.73rem] font-bold text-[#413f4f]">{event.title}</p><time className="shrink-0 text-[0.63rem] font-semibold text-[#9692a1]">{eventTime(event.startedAtSeconds)}</time></div><p className="mb-0 mt-1 text-[0.67rem] text-[#777482]">{eventEvidence(event)}</p></div></li>)}</ol> : <p className="mb-0 px-5 py-4 text-[0.72rem] leading-5 text-[#777482]">No coaching moments yet. Repeated movements and sustained habits will appear here.</p>}</section> : null}
+          {!isSessionActive ? <section className="rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">{stage === "calibrate" ? "Calibration" : "Before you begin"}</p><h2 className="mb-0 mt-2 text-[1.18rem] tracking-[-0.05em]">{stage === "calibrate" ? "Frame yourself comfortably" : "Practice with clarity"}</h2><p className="mb-0 mt-3 text-[0.78rem] leading-6 text-[#676574]">{stage === "calibrate" ? "Use the outline as a visual comfort guide—not a measured score. Keep your face and both eyes visible, with a little space above your head." : "Start with a local camera check. Live coaching measures observable delivery signals, not personality or emotion."}</p><ol className="mb-0 mt-5 grid list-none gap-3 p-0">{["Face a stable light source", "Keep both eyes visible", "Place the camera at eye level"].map((item, index) => <li className="grid grid-cols-[22px_1fr] items-start gap-2 text-[0.73rem] leading-5 text-[#4f4d5c]" key={item}><span className="grid h-[22px] w-[22px] place-items-center rounded-[7px] bg-[#f0edff] text-[0.62rem] font-extrabold text-[#6652e6]">0{index + 1}</span>{item}</li>)}</ol></section> : <><section className={`rounded-2xl border p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)] ${stage === "paused" ? "border-[#e5e3eb] bg-white" : "border-[#dad4ff] bg-[#faf9ff]"}`}><div className="flex items-start justify-between gap-3"><div><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">Current coaching cue</p><h2 className="mb-0 mt-2 text-[1.08rem] leading-[1.15] tracking-[-0.045em]">{stage === "paused" ? "Session paused" : feedback?.prompt ?? "Waiting for the first frame"}</h2></div><span className={`grid h-9 w-9 place-items-center rounded-xl text-[1rem] ${stage === "paused" ? "bg-[#f0eff3] text-[#85818f]" : "bg-[#e9e4ff] text-[#6652e6]"}`}>{stage === "paused" ? "Ⅱ" : "✦"}</span></div><p className="mb-0 mt-3 text-[0.77rem] leading-6 text-[#686574]">{stage === "paused" ? "Resume when you’re ready." : feedback?.prompt === "Object blocking face" ? "Move the object away so your face is visible." : feedback?.personDetected === false ? "Tracking is paused until you return." : "Keep presenting naturally. Your coaching updates will appear here."}</p></section><section className="rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><div className="flex items-center justify-between"><h2 className="m-0 text-[0.86rem] tracking-[-0.025em]">Live coaching</h2><span className={`rounded-full px-2 py-1 text-[0.59rem] font-bold ${connection === "connected" ? "bg-[#e8f9ef] text-[#198b50]" : "bg-[#fff2dc] text-[#a86612]"}`}>{stage === "paused" ? "Paused" : connection === "connected" ? "Live" : "Connecting"}</span></div><dl className="mb-0 mt-4 grid divide-y divide-[#edecf1]">{([['eyes', 'Eyes'], ['head', 'Head'], ['body', 'Body'], ['hands', 'Hands']] as const).map(([key, label]) => <div className="flex items-center justify-between gap-3 py-3" key={key}><dt className="text-[0.72rem] font-semibold text-[#777483]">{label}</dt><dd className="m-0 text-right text-[0.75rem] font-semibold text-[#514965]">{feedback?.status[key] ?? 'Waiting'}</dd></div>)}</dl></section></>}
+          {isSessionActive ? <section className="overflow-hidden rounded-2xl border border-[#e4e3e9] bg-white shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><div className="flex items-center justify-between border-b border-[#edecf1] px-5 py-4"><div><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">Session events</p><h2 className="mb-0 mt-1 text-[0.92rem] tracking-[-0.03em]">Coaching moments</h2></div><span className="rounded-full bg-[#f0edff] px-2 py-1 text-[0.61rem] font-bold text-[#6452df]">{feedback?.sessionEvents.length ?? 0}</span></div>{feedback?.sessionEvents.length ? <ol className="m-0 grid max-h-56 list-none gap-0 overflow-y-auto p-0">{[...feedback.sessionEvents].reverse().map((event) => <li className="grid grid-cols-[9px_minmax(0,1fr)] gap-3 border-b border-[#f0eff3] px-5 py-3 last:border-b-0" key={event.id}><span className={`mt-1.5 h-2 w-2 rounded-full ${event.active ? "bg-[#f39a31] shadow-[0_0_0_4px_#fff0dc]" : "bg-[#a6a2b2]"}`} /><div className="min-w-0"><div className="flex items-baseline justify-between gap-3"><p className="m-0 text-[0.73rem] font-bold text-[#413f4f]">{event.title}</p><time className="shrink-0 text-[0.63rem] font-semibold text-[#9692a1]">{eventTime(event.startedAtSeconds)}</time></div><p className="mb-0 mt-1 text-[0.67rem] text-[#777482]">{eventEvidence(event)}</p></div></li>)}</ol> : <p className="mb-0 px-5 py-4 text-[0.72rem] leading-5 text-[#777482]">No coaching moments yet. Repeated movements and sustained habits will appear here.</p>}</section> : null}
           <section className="rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#858292]">Privacy</p><p className="mb-0 mt-2 text-[0.74rem] leading-5 text-[#676574]">Your camera stays private. Rehearse AI only uses live movement signals to guide you during this practice—no video is recorded or saved.</p></section>
         </aside>
       </section>

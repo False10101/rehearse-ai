@@ -82,9 +82,33 @@ def _client_observation(message: Any) -> FrameObservation | None:
                 values = _numbers([bounds.get(k) for k in ("x", "y", "width", "height")], 4, 0, 1)
                 if values:
                     safe_debug[name] = dict(zip(("x", "y", "width", "height"), values))
+    objects = []
+    for item in (
+        (message.get("objects") or [])[:10] if isinstance(message.get("objects"), list) else []
+    ):
+        if not isinstance(item, dict) or not isinstance(item.get("label"), str):
+            continue
+        box = item.get("bounds")
+        score = _numbers([item.get("confidence")], 1, 0, 1)
+        values = (
+            _numbers([box.get(k) for k in ("x", "y", "width", "height")], 4, 0, 1)
+            if isinstance(box, dict)
+            else None
+        )
+        if score and values and values[2] > 0 and values[3] > 0:
+            objects.append(
+                dict(
+                    label=item["label"][:60],
+                    confidence=score[0],
+                    bounds=dict(zip(("x", "y", "width", "height"), values)),
+                )
+            )
     return FrameObservation(
+        objects=objects,
+        objects_updated=message.get("objects_updated") is True,
         person_detected=message["person_detected"],
         eyes=_numbers(message.get("eyes"), 4, 0, 1),
+        eye_openness=_numbers(message.get("eye_openness"), 2, 0, 2),
         head=_numbers(message.get("head"), 3, -180, 180),
         body=_points(message.get("body"), 33),
         hands=hands,

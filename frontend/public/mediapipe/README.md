@@ -16,3 +16,9 @@ When the package version changes, copy its complete `wasm/` directory here and r
 Live Practice runs face/iris inference on camera updates and pose/hand inference
 at up to 5 Hz. All models run in the browser. Only numerical landmarks are sent
 to the session tracker; camera frames are not uploaded or saved.
+
+- Object model: EfficientDet-Lite0 int8, version 1 (80 COCO categories)
+  - Source: https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite
+  - Runs at up to 2 Hz. Face overlap is a review cue, not a depth or occlusion
+    measurement. Unrecognised objects can be missed; face loss alone is not
+    labelled as an object.
