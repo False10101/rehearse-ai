@@ -6,7 +6,58 @@ import subprocess
 from pathlib import Path
 from statistics import median
 
+import cv2
+import numpy as np
+
+from app.services.motion_intervals import motion_pattern
+
 logger = logging.getLogger(__name__)
+
+
+class BackgroundMotion:
+    """Track image translation outside the presenter, not presenter movement.
+
+    No new inference model: ordinary optical flow compensates camera pans before
+    the sway check measures whole-body side-to-side translation.
+    """
+
+    def __init__(self):
+        self.previous = None
+        self.features = None
+        self.offset_x = 0.0
+
+    def observe(self, frame, people):
+        height, width = frame.shape[:2]
+        scale = 320 / width
+        gray = cv2.cvtColor(cv2.resize(frame, (320, max(1, round(height * scale)))),
+                            cv2.COLOR_BGR2GRAY)
+        known = False
+        if self.previous is not None and self.features is not None:
+            moved, status, _ = cv2.calcOpticalFlowPyrLK(self.previous, gray, self.features, None)
+            if moved is not None and status is not None:
+                good = status.reshape(-1) == 1
+                shifts = (moved - self.features).reshape(-1, 2)[good]
+                if len(shifts) >= 8:
+                    dx, dy = np.median(shifts, axis=0)
+                    inliers = np.linalg.norm(shifts - [dx, dy], axis=1) < 2.5
+                    if float(inliers.mean()) >= 0.7:
+                        self.offset_x += float(dx) / scale
+                        known = True
+        mask = np.full(gray.shape, 255, np.uint8)
+        for points in people:
+            visible = [(x * scale, y * scale) for x, y, confidence in points if confidence >= 0.3]
+            if not visible:
+                continue
+            xs, ys = zip(*visible)
+            # Exclude the torso, head, arms and a margin, not only keypoint pixels.
+            padding = max(15, (max(xs) - min(xs)) * 0.25)
+            cv2.rectangle(mask, (max(0, int(min(xs) - padding)), max(0, int(min(ys) - padding))),
+                          (min(gray.shape[1] - 1, int(max(xs) + padding)),
+                           min(gray.shape[0] - 1, int(max(ys) + padding))), 0, -1)
+        self.features = cv2.goodFeaturesToTrack(gray, maxCorners=100, qualityLevel=0.01,
+                                              minDistance=7, mask=mask)
+        self.previous = gray
+        return self.offset_x if known else None
 
 
 class HeadMovementTracker:
@@ -15,12 +66,15 @@ class HeadMovementTracker:
     def __init__(self):
         self.samples = []
         self.raw = []
+        self.evidence = {}
 
     def reset(self):
         self.samples.clear()
         self.raw.clear()
+        self.evidence = {}
 
     def observe(self, timestamp, points):
+        self.evidence = {}
         if len(points) < 7 or any(points[i][2] < 0.5 for i in (0, 1, 2, 5, 6)):
             self.reset()
             return {}
@@ -57,26 +111,15 @@ class HeadMovementTracker:
             # Repeated sideways tilts can build more slowly than rapid turns.
             # Keep the audience-turn rule strict rather than weakening all axes.
             window = 4.8 if axis == 3 else 3.2
-            values = [s[1][axis] for s in self.samples if timestamp - s[0] <= window]
-            recent = [s[1][axis] for s in self.samples if timestamp - s[0] <= 0.6 + 1e-6]
-            # Stop reporting once the head settles instead of keeping an old
-            # burst active until every turn leaves the history window.
-            if len(recent) < 2 or max(recent) - min(recent) < step * 0.4:
-                continue
-            extreme, direction, reversals = values[0], 0, 0
-            for value in values[1:]:
-                change = value - extreme
-                if direction == 0 and abs(change) >= step:
-                    direction = 1 if change > 0 else -1
-                    extreme = value
-                elif direction * change > 0:
-                    extreme = value
-                elif direction * change <= -step:
-                    reversals += 1
-                    direction *= -1
-                    extreme = value
             required_reversals = 2 if axis == 3 else 3
-            if reversals >= required_reversals and max(values) - min(values) >= extent:
+            series = [(s[0], s[1][axis]) for s in self.samples if timestamp - s[0] <= window]
+            pattern = motion_pattern(series, step, extent, required_reversals)
+            if pattern:
+                self.evidence = {"repeated_head_movement": {
+                    "body_part": "head", "axis": (
+                        "side to side", "side to side", "up and down", "in sideways tilts"
+                    )[axis], **pattern,
+                }}
                 return {"repeated_head_movement": 0.8}
         return {}
 
@@ -88,14 +131,21 @@ class MovementTracker:
         self.near = False
         self.near_since = None
         self.head = HeadMovementTracker()
+        self.evidence = {}
+        self.body_samples = []
+        self.body_origin = None
+        self.body_width = None
 
-    def observe(self, timestamp, points):
+    def observe(self, timestamp, points, camera_offset_x=None):
+        self.evidence = {}
         if not points:
             self.samples.clear()
             self.touches.clear()
             self.near = False
             self.near_since = None
             self.head.reset()
+            self.body_samples.clear()
+            self.body_origin = None
             return {}
         width = math.dist(points[5][:2], points[6][:2])
         if width < 10:
@@ -111,6 +161,8 @@ class MovementTracker:
             self.near = False
             self.near_since = None
             self.head.reset()
+            self.body_samples.clear()
+            self.body_origin = None
         # Relative torso movement reduces sensitivity to whole-frame translation.
         self.samples.append((timestamp, (shoulder - hip) / width, hip, width))
         self.samples = [s for s in self.samples if timestamp - s[0] <= 8]
@@ -130,30 +182,47 @@ class MovementTracker:
         self.near = near
         self.touches = [t for t in self.touches if timestamp - t <= 15]
         result = self.head.observe(timestamp, points)
+        self.evidence.update(self.head.evidence)
         # A held face contact can be reviewed without requiring three repetitions.
         if near and (
             len(self.touches) >= 2
             or (self.near_since is not None and timestamp - self.near_since >= 1.0)
         ):
             result["hand_near_face"] = 0.8
+            wrist = min((i for i in (9, 10) if points[i][2] >= 0.5),
+                        key=lambda i: math.dist(points[i][:2], points[0][:2]))
+            self.evidence["hand_near_face"] = {
+                "body_part": "your left hand" if wrist == 9 else "your right hand",
+                "approaches": len(self.touches),
+                "near_hold_seconds": round(timestamp - self.near_since, 2),
+                "pattern_start_seconds": self.near_since,
+            }
         if self.samples[-1][0] - self.samples[0][0] >= 2:
-            values = [s[1] for s in self.samples]
-            extreme = values[0]
-            direction = 0
-            reversals = 0
-            for value in values[1:]:
-                change = value - extreme
-                if abs(change) >= 0.12:
-                    new_direction = 1 if change > 0 else -1
-                    if direction and new_direction != direction:
-                        reversals += 1
-                    direction = new_direction
-                    extreme = value
-                elif direction * change > 0:
-                    extreme = value
+            pattern = motion_pattern([(s[0], s[1]) for s in self.samples], 0.12, 0.24, 2)
             hips = [s[2] for s in self.samples]
-            if reversals >= 2 and max(hips) - min(hips) < width * 0.5:
+            if pattern and max(hips) - min(hips) < width * 0.5:
                 result["repeated_swaying"] = 0.8
+                self.evidence["repeated_swaying"] = {
+                    "body_part": "torso", "axis": "torso lean", **pattern,
+                }
+        # A rigid side-to-side weight shift moves shoulders AND hips, so it is
+        # invisible to shoulder-minus-hip lean alone. Only measure it when the
+        # background supplies camera-motion compensation.
+        if camera_offset_x is None:
+            self.body_samples.clear()
+            self.body_origin = None
+        else:
+            corrected = hip - camera_offset_x
+            if self.body_origin is None:
+                self.body_origin, self.body_width = corrected, width
+            self.body_samples.append((timestamp, (corrected - self.body_origin) / self.body_width))
+            self.body_samples = [s for s in self.body_samples if timestamp - s[0] <= 6]
+            pattern = motion_pattern(self.body_samples, 0.12, 0.24, 2)
+            if pattern:
+                result["repeated_swaying"] = 0.8
+                self.evidence["repeated_swaying"] = {
+                    "body_part": "torso", "axis": "whole-body lateral shifting", **pattern,
+                }
         return result
 
 
@@ -192,7 +261,9 @@ def save_gesture_clips(source: Path, directory: Path, events: list, duration: fl
                     "-c:v",
                     "libx264",
                     "-preset",
-                    "fast",
+                    "veryfast",
+                    "-threads",
+                    "2",
                     "-crf",
                     "25",
                     "-pix_fmt",

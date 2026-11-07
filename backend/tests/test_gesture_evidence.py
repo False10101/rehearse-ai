@@ -73,7 +73,8 @@ def test_repeated_sideways_tilts_detected_without_rapid_yaw():
     import math
 
     tracker = HeadMovementTracker()
-    results = [tracker.observe(i / 5, tilted_head_points(0.3 * math.sin(i / 5 * 1.8))) for i in range(60)]
+    results = [tracker.observe(i / 5, tilted_head_points(0.3 * math.sin(i / 5 * 1.8)))
+               for i in range(60)]
     assert any("repeated_head_movement" in result for result in results)
     for i in range(60, 70):
         result = tracker.observe(i / 5, tilted_head_points(0))
@@ -106,7 +107,8 @@ def test_moderate_repeated_tilts_are_detected():
     import math
 
     tracker = HeadMovementTracker()
-    results = [tracker.observe(i / 5, tilted_head_points(0.12 * math.sin(i / 5 * 1.8))) for i in range(60)]
+    results = [tracker.observe(i / 5, tilted_head_points(0.12 * math.sin(i / 5 * 1.8)))
+               for i in range(60)]
     assert any("repeated_head_movement" in result for result in results)
 
 
@@ -194,3 +196,43 @@ def test_clip_failure_does_not_claim_video(monkeypatch, tmp_path):
     events = [dict(type="arms_crossed", start_seconds=1, end_seconds=3)]
     save_gesture_clips(tmp_path / "source.mp4", tmp_path, events, 10)
     assert "clip_index" not in events[0]
+
+
+def test_whole_body_sway_is_measured_separately_from_torso_lean():
+    import math
+
+    tracker = MovementTracker()
+    flagged = []
+    for i in range(60):
+        shift = 25 * math.sin(i / 5 * 2.5)
+        p = [(x + shift, y, c) for x, y, c in points()]
+        flagged.append(tracker.observe(i / 5, p, camera_offset_x=0))
+    assert any("repeated_swaying" in result for result in flagged)
+
+
+def test_camera_translation_is_not_presenter_sway():
+    import math
+
+    tracker = MovementTracker()
+    for i in range(60):
+        camera = 30 * math.sin(i / 5 * 2.5)
+        p = [(x + camera, y, c) for x, y, c in points()]
+        assert "repeated_swaying" not in tracker.observe(i / 5, p, camera_offset_x=camera)
+
+
+def test_one_deliberate_side_step_is_not_repeated_sway():
+    tracker = MovementTracker()
+    for i in range(60):
+        shift = min(i, 20)
+        p = [(x + shift, y, c) for x, y, c in points()]
+        assert "repeated_swaying" not in tracker.observe(i / 5, p, camera_offset_x=0)
+
+
+def test_movement_measurements_survive_and_reset_after_tracking_loss():
+    tracker = MovementTracker()
+    for i in range(8):
+        tracker.observe(i / 5, points(near=True))
+    assert tracker.evidence["hand_near_face"]["near_hold_seconds"] >= 1
+    assert tracker.evidence["hand_near_face"]["body_part"] == "your left hand"
+    tracker.observe(2, [])
+    assert tracker.evidence == {}

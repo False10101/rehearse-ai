@@ -61,6 +61,6 @@ export function PracticeSpeechMoment({ moment, accessToken }: {
       <details className="practice-delivery-example"><summary>Try saying it this way</summary>
         <blockquote className="practice-rehearsal">{moment.suggested_delivery}</blockquote>
       </details>
-    </> : <p className="practice-note">The excerpt is available, but specific coaching could not be generated for this moment.</p>}
+    </> : <p className="practice-note">Feedback for this excerpt couldn’t be generated. Choose “Retry speech feedback” above to try again.</p>}
   </div>;
 }

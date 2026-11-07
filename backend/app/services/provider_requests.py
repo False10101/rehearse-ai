@@ -11,6 +11,19 @@ logger = logging.getLogger(__name__)
 MAX_RETRY_WAIT_SECONDS = 300
 
 
+def luna_fast_routing() -> dict:
+    """Prefer Luna's OpenAI Fast endpoint, retaining provider outage fallback.
+
+    Explicitly opt into priority capacity: sorting standard endpoints by speed
+    alone does not enable Fast. Keep this separate from Qwen/Groq requests.
+    https://openrouter.ai/docs/guides/features/service-tiers
+    """
+    return {
+        "service_tier": "priority",
+        "provider": {"order": ["openai/fast"], "allow_fallbacks": True},
+    }
+
+
 class ProviderRequestError(requests.HTTPError):
     def __init__(self, response, error_code, retry_after=None):
         messages = {

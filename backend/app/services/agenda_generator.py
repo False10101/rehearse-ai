@@ -17,6 +17,7 @@ from app.services.agenda_layouts import (
     agenda_scene,
     theme_colors,
 )
+from app.services.provider_requests import luna_fast_routing
 from app.services.slide_analyzer import ANALYSIS_MODEL, OPENROUTER_API_URL, openrouter_headers
 
 AGENDA_MODEL = ANALYSIS_MODEL
@@ -58,6 +59,7 @@ def _items_from_model(slides: list[dict]) -> tuple[list[dict[str, str]], int]:
                 headers=openrouter_headers(),
                 json={
                     "model": AGENDA_MODEL,
+                    **luna_fast_routing(),
                     "messages": [
                         {
                             "role": "user",

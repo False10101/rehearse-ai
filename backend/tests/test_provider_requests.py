@@ -137,7 +137,7 @@ def test_bulk_generation_does_not_restart_provider_retry_cycle(monkeypatch):
     ])
     presentation = SimpleNamespace(id=uuid4())
     job = SimpleNamespace(status="queued")
-    slide = SimpleNamespace(id=uuid4(), slide_number=1)
+    slide = SimpleNamespace(id=uuid4(), slide_number=1, extracted_content={"num": 1})
     session = Mock()
     session.get.return_value = presentation
     session.scalar.return_value = job
@@ -145,7 +145,7 @@ def test_bulk_generation_does_not_restart_provider_retry_cycle(monkeypatch):
     session.begin_nested.side_effect = nullcontext
     monkeypatch.setattr(transcripts, "get_session_factory", lambda: lambda: session)
     monkeypatch.setattr(transcripts, "_latest_by_slide", lambda *args: ({}, {}))
-    monkeypatch.setattr(transcripts, "_create_ai_slide_transcript", lambda *args, **kw: request())
+    monkeypatch.setattr(transcripts, "generate_script", lambda **kw: request())
     transcripts.run_generate_all_transcripts(presentation.id, 75, "informative", "natural", 1, 1)
     assert job.status == "failed"
     assert job.error_code == "AI_PROVIDER_BUSY"

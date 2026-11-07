@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -11,7 +12,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from app.core.auth import Auth0Principal, get_auth0_principal
 from app.core.config import get_settings
-from app.services.live_coaching import DebugBounds, FrameObservation, LiveCoachingTracker
+from app.services.live_coaching import FrameObservation, LiveCoachingTracker
 
 router = APIRouter(prefix="/api/v1/live", tags=["live-practice"])
 logger = logging.getLogger(__name__)
@@ -34,62 +35,69 @@ def _authenticate_websocket_message(payload: Any) -> Auth0Principal | None:
     return get_auth0_principal(token, get_settings())
 
 
-def _normalized_pair(value: Any) -> tuple[float, float] | None:
-    if not isinstance(value, list) or len(value) != 2:
+def _numbers(value, length, low, high):
+    if not isinstance(value, list) or len(value) != length:
         return None
-    if not all(isinstance(item, (int, float)) and 0 <= item <= 1 for item in value):
+    if not all(
+        isinstance(n, (int, float))
+        and not isinstance(n, bool)
+        and math.isfinite(n)
+        and low <= n <= high
+        for n in value
+    ):
         return None
-    return float(value[0]), float(value[1])
+    return tuple(float(n) for n in value)
 
 
-def _debug_bounds(value: Any) -> DebugBounds | None:
-    if not isinstance(value, dict):
+def _points(value, count):
+    if not isinstance(value, list) or len(value) != count:
         return None
-    fields = ("x", "y", "width", "height")
-    if not all(isinstance(value.get(field), (int, float)) for field in fields):
-        return None
-    x, y, width, height = (float(value[field]) for field in fields)
-    if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > 1 or y + height > 1:
-        return None
-    return DebugBounds(x=x, y=y, width=width, height=height)
+    points = [_numbers(p, 4, -5, 5) for p in value]
+    return points if all(p is not None for p in points) else None
 
 
 def _client_observation(message: Any) -> FrameObservation | None:
     if not isinstance(message, dict) or message.get("type") != "observation":
         return None
-    person_detected = message.get("person_detected")
-    if not isinstance(person_detected, bool):
+    if not isinstance(message.get("person_detected"), bool):
         return None
-    if not person_detected:
-        return FrameObservation(person_detected=False)
-    left_gaze_position = _normalized_pair(message.get("left_gaze_position"))
-    right_gaze_position = _normalized_pair(message.get("right_gaze_position"))
-    head_yaw = message.get("head_yaw")
-    if not isinstance(head_yaw, (int, float)) or abs(head_yaw) > 2:
-        head_yaw = None
-    debug_payload = message.get("debug")
-    debug: dict[str, dict[str, float]] = {}
-    if isinstance(debug_payload, dict):
-        for source, target in (
-            ("face", "face"),
-            ("left_eye", "left_eye"),
-            ("right_eye", "right_eye"),
-        ):
-            bounds = _debug_bounds(debug_payload.get(source))
-            if bounds is not None:
-                debug[target] = bounds.as_message()
+    targets = message.get("face_targets")
+    targets = (
+        [_numbers(p, 2, -2, 3) for p in targets]
+        if isinstance(targets, list) and len(targets) == 4
+        else None
+    )
+    if targets is not None and any(p is None for p in targets):
+        targets = None
+    hands = message.get("hands")
+    hands = [_points(h, 21) for h in hands] if isinstance(hands, list) and len(hands) <= 2 else None
+    if hands is not None and any(h is None for h in hands):
+        hands = None
+    debug = message.get("debug")
+    safe_debug = {}
+    if isinstance(debug, dict):
+        for name in ("face", "left_eye", "right_eye"):
+            bounds = debug.get(name)
+            if isinstance(bounds, dict):
+                values = _numbers([bounds.get(k) for k in ("x", "y", "width", "height")], 4, 0, 1)
+                if values:
+                    safe_debug[name] = dict(zip(("x", "y", "width", "height"), values))
     return FrameObservation(
-        person_detected=True,
-        left_gaze_position=left_gaze_position,
-        right_gaze_position=right_gaze_position,
-        head_yaw=float(head_yaw) if head_yaw is not None else None,
-        debug=debug or None,
+        person_detected=message["person_detected"],
+        eyes=_numbers(message.get("eyes"), 4, 0, 1),
+        head=_numbers(message.get("head"), 3, -180, 180),
+        body=_points(message.get("body"), 33),
+        hands=hands,
+        body_updated=message.get("body_updated") is True,
+        hands_updated=message.get("hands_updated") is True,
+        face_targets=targets,
+        debug=safe_debug or None,
     )
 
 
 @router.websocket("/stream")
 async def stream_live_feedback(websocket: WebSocket) -> None:
-    """Receive browser-derived numerical iris observations after Auth0 authentication."""
+    """Receive browser-derived movement landmarks after Auth0 authentication."""
 
     await websocket.accept()
     try:
@@ -153,7 +161,7 @@ async def stream_live_feedback(websocket: WebSocket) -> None:
                             {
                                 "type": "warning",
                                 "code": "LIVE_INVALID_OBSERVATION",
-                                "message": "Invalid eye-tracking observation metadata.",
+                                "message": "Invalid movement observation metadata.",
                             }
                         )
                         continue
@@ -172,7 +180,7 @@ async def stream_live_feedback(websocket: WebSocket) -> None:
                             {
                                 "type": "warning",
                                 "code": "LIVE_INVALID_OBSERVATION",
-                                "message": "Invalid eye-tracking observation.",
+                                "message": "Invalid movement observation.",
                             }
                         )
                         continue
@@ -208,9 +216,9 @@ async def stream_live_feedback(websocket: WebSocket) -> None:
                     await websocket.send_json(
                         {
                             "type": "recalibrating",
-                            "calibration_required": get_settings().live_gaze_calibration_frames,
+                            "calibration_required": get_settings().live_calibration_frames,
                             "message": (
-                                "Look at the camera marker while eye contact is recalibrated."
+                                "Face forward in a comfortable position and look at the marker."
                             ),
                         }
                     )

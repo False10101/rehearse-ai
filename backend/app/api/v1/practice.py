@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from datetime import datetime
@@ -17,6 +18,9 @@ from app.core.config import get_settings
 from app.db.models import Job, UploadPracticeSession
 from app.db.session import get_db_session
 from app.services.background_jobs import run_background_job
+from app.services.gesture_coaching import GestureCoaching, review_gesture
+from app.services.gesture_rules import RULE_VERSION, prepare_gesture_events
+from app.services.provider_requests import ProviderRequestError
 from app.services.speech_evidence import run_retry_speech_coaching
 from app.services.storage import (
     save_limited_upload,
@@ -32,9 +36,12 @@ from app.services.upload_practice import (
 from app.services.users import get_or_create_user
 
 router = APIRouter(prefix="/api/v1/practice/upload", tags=["upload-practice"])
+logger = logging.getLogger(__name__)
 
 
 class PoseEventResponse(BaseModel):
+    coaching: GestureCoaching | None = None
+    detection: dict | None = None
     evidence_video_url: str | None = None
     type: str
     label: str
@@ -61,6 +68,7 @@ class CoachingFindingResponse(BaseModel):
 
 class UploadPracticeResponse(BaseModel):
     speech_coaching_status: str | None = None
+    processing_tracks: dict[str, Any] | None = None
     id: uuid.UUID
     original_filename: str
     status: str
@@ -141,7 +149,8 @@ def session_response(
         else None
     )
     events: list[PoseEventResponse] = []
-    for event in record.pose_events:
+    pose_events = prepare_gesture_events(record.pose_events)
+    for event in pose_events:
         if not isinstance(event, dict):
             continue
         evidence_index = event.get("evidence_index")
@@ -152,13 +161,15 @@ def session_response(
         )
         events.append(
             PoseEventResponse(
+                coaching=event.get("coaching"),
+                detection=event.get("detection"),
                 type=str(event.get("type") or "pose_event"),
                 label=str(event.get("label") or "Pose event"),
                 start_seconds=float(event.get("start_seconds") or 0),
                 end_seconds=float(event.get("end_seconds") or 0),
                 duration_seconds=float(event.get("duration_seconds") or 0),
                 confidence=float(event.get("confidence") or 0),
-                feedback=str(event.get("feedback") or "Review this moment in your rehearsal."),
+                feedback=event["coaching"]["observation"],
                 evidence_image_url=image_url,
                 evidence_video_url=(
                     f"/api/v1/practice/upload/sessions/{record.id}/gesture/{event['clip_index']}"
@@ -182,7 +193,7 @@ def session_response(
             "pace_events": pace_events,
             "repetition_events": record.repetition_events,
         },
-        record.pose_events,
+        pose_events,
         record.pose_tracking,
     )
     stored_findings = list(generated_coaching["findings"])
@@ -259,6 +270,8 @@ def session_response(
         sensitive_term_flags=record.sensitive_term_flags,
         pose_events=events,
         pose_tracking=record.pose_tracking,
+        processing_tracks=(record.pose_tracking or {}).get("processing")
+        if record.status == "processing" else None,
         coaching_findings=findings,
         coaching_strengths=[str(item) for item in stored_strengths],
         practice_plan=[str(item) for item in stored_plan],
@@ -384,6 +397,45 @@ def get_upload_practice_session(
     user=Depends(authenticated_user),
 ) -> UploadPracticeResponse:
     return session_response(owned_session(database, user.id, practice_session_id), database)
+
+
+@router.post("/sessions/{practice_session_id}/gesture-review/{evidence_index}",
+             response_model=GestureCoaching)
+def review_saved_gesture(
+    practice_session_id: uuid.UUID,
+    evidence_index: int,
+    database: Session = Depends(get_db_session),
+    user=Depends(authenticated_user),
+) -> GestureCoaching:
+    record = owned_session(database, user.id, practice_session_id)
+    if record.status != "completed":
+        raise HTTPException(409, "Wait for your recording review to finish.")
+    event = next((item for item in prepare_gesture_events(record.pose_events)
+                  if item.get("evidence_index") == evidence_index), None)
+    if event is None:
+        raise HTTPException(404, "This moment could not be found.")
+    if (event.get("coaching", {}).get("source") == "rewrite"
+            and event["coaching"].get("version") == RULE_VERSION):
+        return GestureCoaching.model_validate(event["coaching"])
+    directory = storage_path(f"practice-reports/{user.id}/{practice_session_id}")
+    try:
+        coaching = review_gesture(directory, event, record.timed_transcript)
+    except ProviderRequestError as error:
+        raise HTTPException(503, str(error)) from error
+    except Exception as error:
+        logger.exception(
+            "Saved gesture review failed session=%s evidence=%s", record.id, evidence_index
+        )
+        raise HTTPException(502, "We couldn’t review this moment. Please try again.") from error
+    # Merge into a fresh row so concurrent reviews of different moments do not
+    # overwrite one another's saved feedback after their provider calls finish.
+    database.refresh(record, with_for_update=True)
+    record.pose_events = [
+        {**item, "coaching": coaching} if item.get("evidence_index") == evidence_index else item
+        for item in record.pose_events
+    ]
+    database.commit()
+    return GestureCoaching.model_validate(coaching)
 
 
 @router.get("/sessions/{practice_session_id}/evidence/{evidence_index}")

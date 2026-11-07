@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import subprocess
 import uuid
+import wave
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
+from time import monotonic
 from typing import Any
 
 import cv2
@@ -21,9 +25,14 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models import Job, UploadPracticeSession
 from app.db.session import get_session_factory
-from app.services.gesture_evidence import MovementTracker, save_gesture_clips
+from app.services.gesture_coaching import coach_gesture_events
+from app.services.gesture_evidence import BackgroundMotion, MovementTracker, save_gesture_clips
+from app.services.gesture_rules import pattern_key, prepare_gesture_events
+from app.services.motion_intervals import union_intervals
 from app.services.pose_coverage import PoseCoverage
+from app.services.practice_processing import PracticeProgress, run_practice_tracks
 from app.services.speech_evidence import coach_speech_moments, save_audio_excerpts, speech_moments
+from app.services.speech_timing import audio_silences, contextualize_pace
 from app.services.storage import storage_path, upload_practice_evidence_key
 
 logger = logging.getLogger(__name__)
@@ -54,7 +63,8 @@ POSE_LABELS = {
 }
 POSE_FEEDBACK = {
     "repeated_head_movement": (
-        "Repeated head turns or sideways tilts were estimated in this excerpt. Review whether they supported "
+        "Repeated head turns or sideways tilts were estimated in this excerpt. "
+        "Review whether they supported "
         "audience contact or competed with your explanation. Try settling briefly between points; "
         "natural glances and nods are appropriate. This is a movement estimate, not eye tracking."
     ),
@@ -138,6 +148,9 @@ class ActivePoseEvent:
     best_seconds: float
     best_frame: Any
     best_keypoints: list[tuple[float, float, float]]
+    measurements: list[dict] = field(default_factory=list)
+    intervals: list[tuple[float, float]] = field(default_factory=list)
+    tracking_segment: int = 0
 
     def add(
         self,
@@ -145,13 +158,21 @@ class ActivePoseEvent:
         confidence: float,
         frame: Any,
         keypoints: list[tuple[float, float, float]],
+        measurements: dict | None = None,
+        interval: tuple[float, float] | None = None,
+        evidence_seconds: float | None = None,
     ) -> None:
         self.last_seconds = timestamp
         self.confidence_total += confidence
         self.sample_count += 1
+        if interval:
+            self.intervals = union_intervals([*self.intervals, interval])
+            self.start_seconds = self.intervals[0][0]
+        if measurements:
+            self.measurements.append({"seconds": timestamp, **measurements})
         if confidence > self.best_confidence:
             self.best_confidence = confidence
-            self.best_seconds = timestamp
+            self.best_seconds = timestamp if evidence_seconds is None else evidence_seconds
             self.best_frame = frame.copy()
             self.best_keypoints = keypoints
 
@@ -165,6 +186,8 @@ class PoseEventCollector:
     events: list[dict[str, Any]] = field(default_factory=list)
     active: dict[str, ActivePoseEvent] = field(default_factory=dict)
     last_tracking_loss: float = float("-inf")
+    tracking_segment: int = 0
+    frame_history: deque = field(default_factory=deque)
 
     def observe(
         self,
@@ -172,32 +195,61 @@ class PoseEventCollector:
         detections: dict[str, float],
         frame: Any,
         keypoints: list[tuple[float, float, float]],
+        measurements: dict[str, dict] | None = None,
     ) -> None:
         if not keypoints:
             self.last_tracking_loss = timestamp
+            self.tracking_segment += 1
+        else:
+            self.frame_history.append((timestamp, frame.copy(), keypoints))
+        while self.frame_history and timestamp - self.frame_history[0][0] > 2:
+            self.frame_history.popleft()
         for event_type in POSE_LABELS:
             confidence = detections.get(event_type, 0.0)
             current = self.active.get(event_type)
+            detail = (measurements or {}).get(event_type)
+            if (current and current.measurements and detail
+                    and pattern_key({"type": event_type, "measurements": current.measurements[-1:]})
+                    != pattern_key({"type": event_type, "measurements": [detail]})):
+                self._finish(event_type)
+                current = None
             gap_limit = 0.8 if event_type in {"arms_crossed", "hands_clasped_low"} else 0.4
             if current and (not keypoints or timestamp - current.last_seconds > gap_limit + 1e-6):
                 self._finish(event_type)
                 current = None
             threshold = POSE_EVENT_THRESHOLDS[event_type] - (0.08 if current else 0)
             if confidence >= threshold:
+                actual_start = max(
+                    0.0, float((detail or {}).get("pattern_start_seconds", timestamp)),
+                    self.last_tracking_loss + self.sample_interval,
+                )
+                actual_end = min(
+                    timestamp, float((detail or {}).get("pattern_end_seconds", timestamp))
+                )
+                interval = (actual_start, actual_end + self.sample_interval)
+                support = [sample for sample in self.frame_history
+                           if interval[0] - 1e-6 <= sample[0] < interval[1] - 1e-6]
+                if not support:
+                    continue
+                evidence_time, evidence_frame, evidence_points = support[-1]
                 if current is None:
                     self.active[event_type] = ActivePoseEvent(
                         event_type=event_type,
-                        start_seconds=timestamp,
+                        start_seconds=actual_start,
                         last_seconds=timestamp,
                         confidence_total=confidence,
                         sample_count=1,
                         best_confidence=confidence,
-                        best_seconds=timestamp,
-                        best_frame=frame.copy(),
-                        best_keypoints=keypoints,
+                        best_seconds=evidence_time,
+                        best_frame=evidence_frame.copy(),
+                        best_keypoints=evidence_points,
+                        measurements=[{"seconds": timestamp, **(measurements or {})[event_type]}]
+                        if (measurements or {}).get(event_type) else [],
+                        intervals=[interval], tracking_segment=self.tracking_segment,
                     )
                 else:
-                    current.add(timestamp, confidence, frame, keypoints)
+                    current.add(timestamp, confidence, evidence_frame, evidence_points,
+                                detail, interval, evidence_time)
             elif current is not None and (
                 not keypoints or timestamp - current.last_seconds >= gap_limit
             ):
@@ -210,13 +262,19 @@ class PoseEventCollector:
 
     def _finish(self, event_type: str) -> None:
         event = self.active.pop(event_type)
-        duration = event.sample_count * self.sample_interval
+        intervals = union_intervals(event.intervals)
+        duration = sum(end - start for start, end in intervals)
         if duration + 1e-6 < MIN_EVENT_SECONDS[event_type]:
             return
+        identity = pattern_key({"type": event_type, "measurements": event.measurements})
         previous = next((e for e in reversed(self.events) if e["type"] == event_type), None)
+        if previous and pattern_key(previous) != identity:
+            previous = None
+        motion = event_type in {"repeated_head_movement", "repeated_swaying"}
+        gap = 0 if motion else 0.8
         merge = previous is not None and (
-            0 <= event.start_seconds - previous["end_seconds"] <= 0.8 + 1e-6
-            and previous["end_seconds"] > self.last_tracking_loss
+            event.start_seconds <= previous["end_seconds"] + gap + 1e-6
+            and previous.get("tracking_segment", 0) == event.tracking_segment
         )
         evidence_index = previous["evidence_index"] if merge else len(self.events) + 1
         evidence_path = self.evidence_directory / f"evidence_{evidence_index:03d}.jpg"
@@ -232,28 +290,36 @@ class PoseEventCollector:
                 "GESTURE_EVIDENCE_FAILED", "Gesture evidence could not be saved. Please retry."
             )
         if merge:
-            old_duration = previous["duration_seconds"]
+            old_samples = previous["confidence_sample_count"]
             previous["confidence"] = round(
-                (
-                    previous["confidence"] * old_duration
-                    + event.confidence_total * self.sample_interval
-                )
-                / (old_duration + duration),
+                (previous["confidence"] * old_samples + event.confidence_total)
+                / (old_samples + event.sample_count),
                 3,
             )
-            previous["duration_seconds"] = round(old_duration + duration, 2)
-            previous["end_seconds"] = round(event.last_seconds + self.sample_interval, 2)
+            previous["confidence_sample_count"] = old_samples + event.sample_count
+            merged = union_intervals([*previous["observed_intervals"], *intervals])
+            previous["observed_intervals"] = merged
+            previous["duration_seconds"] = round(sum(end - start for start, end in merged), 2)
+            previous["start_seconds"] = round(merged[0][0], 2)
+            previous["end_seconds"] = round(merged[-1][1], 2)
+            previous["evidence_seconds"] = event.best_seconds
+            previous.setdefault("measurements", []).extend(event.measurements)
             return
         self.events.append(
             {
                 "type": event_type,
                 "label": POSE_LABELS[event_type],
                 "start_seconds": round(event.start_seconds, 2),
-                "end_seconds": round(event.last_seconds + self.sample_interval, 2),
+                "end_seconds": round(intervals[-1][1], 2),
                 "duration_seconds": round(duration, 2),
                 "confidence": round(event.confidence_total / event.sample_count, 3),
+                "confidence_sample_count": event.sample_count,
                 "feedback": POSE_FEEDBACK[event_type],
+                "evidence_seconds": event.best_seconds,
                 "evidence_index": evidence_index,
+                "measurements": event.measurements,
+                "observed_intervals": intervals,
+                "tracking_segment": event.tracking_segment,
             }
         )
 
@@ -426,7 +492,9 @@ def timed_words(transcription: dict[str, Any]) -> list[dict[str, Any]]:
     return derived
 
 
-def speech_metrics(transcription: dict[str, Any]) -> dict[str, Any]:
+def speech_metrics(
+    transcription: dict[str, Any], silences: list[dict] | None = None
+) -> dict[str, Any]:
     text = str(transcription.get("text") or "").strip()
     words = timed_words(transcription)
     word_count = len(re.findall(r"\b[A-Za-z0-9']+\b", text))
@@ -508,8 +576,9 @@ def speech_metrics(transcription: dict[str, Any]) -> dict[str, Any]:
     ]
     filler_events = _deduplicate_overlapping_fillers(filler_events)
     filler_clusters = _filler_clusters(filler_events)
-    pause_events = _pause_events(words)
+    pause_events = _pause_events(words, silences)
     pace_samples = _pace_samples(words)
+    contextualize_pace(pace_samples, words, silences)
     pace_events = _pace_events(pace_samples)
     repetition_events = _repetition_events(words, normalized)
     sensitive_terms = {
@@ -589,20 +658,32 @@ def _filler_clusters(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return clusters
 
 
-def _pause_events(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _pause_events(
+    words: list[dict[str, Any]], silences: list[dict] | None = None
+) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for index in range(1, len(words)):
         gap = float(words[index]["start"]) - float(words[index - 1]["end"])
         if gap < 2.0:
             continue
+        start, end = float(words[index - 1]["end"]), float(words[index]["start"])
+        if silences is not None:
+            overlaps = [(max(start, s["start"]), min(end, s["end"])) for s in silences]
+            overlaps = [(a, b) for a, b in overlaps if b - a >= 1.5]
+            if not overlaps:
+                continue
+            start, end = max(overlaps, key=lambda interval: interval[1] - interval[0])
+            if end - start < 2 or (end - start) / gap < 0.7:
+                continue
         context_start = max(0, index - 5)
         context_end = min(len(words), index + 5)
         events.append(
             {
-                "start_seconds": round(float(words[index - 1]["end"]), 2),
-                "end_seconds": round(float(words[index]["start"]), 2),
-                "duration_seconds": round(gap, 2),
-                "severity": "long" if gap >= 4 else "noticeable",
+                "start_seconds": round(start, 2),
+                "end_seconds": round(end, 2),
+                "duration_seconds": round(end - start, 2),
+                "severity": "long" if end - start >= 4 else "noticeable",
+                "timing_source": "audio" if silences is not None else "estimated",
                 "context": " ".join(item["word"] for item in words[context_start:context_end]),
             }
         )
@@ -892,10 +973,9 @@ def build_coaching_report(
         )
 
     pose_groups: dict[str, list[dict[str, Any]]] = {}
-    for event in pose_events:
-        if isinstance(event, dict):
-            event_type = str(event.get("type") or "")
-            pose_groups.setdefault(event_type, []).append(event)
+    for event in prepare_gesture_events(pose_events):
+        event_type = str(event.get("type") or "")
+        pose_groups.setdefault(event_type, []).append(event)
     if pose_groups:
         event_type, grouped_events = max(
             pose_groups.items(),
@@ -904,46 +984,9 @@ def build_coaching_report(
         representative = max(
             grouped_events, key=lambda event: float(event.get("duration_seconds", 0))
         )
-        pose_copy = {
-            "repeated_head_movement": (
-                "Give your head movements a clear purpose",
-                "Your head changed direction repeatedly in this excerpt.",
-                "Repeated movement may compete with your explanation; natural audience scanning "
-                "and nods can still be appropriate.",
-                "Replay this moment and try settling your head briefly between main points.",
-            ),
-            "hands_clasped_low": (
-                "Bring your gestures back into view",
-                "Your hands stayed clasped below the visible gesture area during part of the "
-                "rehearsal.",
-                "Hidden, fixed hands reduce visible emphasis and can make delivery appear guarded.",
-                "Let your hands rest naturally, then raise them to chest height only when "
-                "emphasizing a point.",
-            ),
-            "arms_crossed": (
-                "Reopen your posture",
-                "An arm stayed across your body toward the opposite shoulder, or both arms "
-                "remained folded during part of the rehearsal.",
-                "A closed stance can reduce the sense of openness and audience connection.",
-                "Release your arms after the transition and return to a relaxed, open resting "
-                "position.",
-            ),
-            "gesture_box_excursion": (
-                "Keep large gestures controlled",
-                "One arm remained near a full sideways extension during part of the rehearsal.",
-                "A sustained oversized gesture can pull attention away from the message.",
-                "Use the wide gesture for emphasis, then bring your hand back toward your torso "
-                "immediately.",
-            ),
-        }
-        headline, observation, impact, recommendation = pose_copy.get(
-            event_type,
-            (
-                "Make your body language more deliberate",
-                "A sustained body-language pattern may distract from the message.",
-                "Distracting movement competes with the content.",
-                "Return to a relaxed neutral posture after each gesture.",
-            ),
+        review = representative["coaching"]
+        headline, observation, impact, recommendation = (
+            review["title"], review["observation"], review["impact"], review["recommendation"]
         )
         candidates.append(
             coaching_finding(
@@ -953,12 +996,7 @@ def build_coaching_report(
                 observation=observation,
                 impact=impact,
                 recommendation=recommendation,
-                drill=(
-                    f"Replay the moment at "
-                    f"{format_timestamp(float(representative.get('start_seconds', 0)))} and "
-                    "practise "
-                    "the same sentence with one smaller, intentional gesture."
-                ),
+                drill=recommendation,
                 start_seconds=float(representative.get("start_seconds", 0)),
                 end_seconds=float(representative.get("end_seconds", 0)),
                 priority=80
@@ -1081,7 +1119,31 @@ def presenter_pose_is_reliable(keypoints: list[tuple[float, float, float]]) -> b
     return face_confident and confident_body >= 7
 
 
-def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, float]:
+def select_presenter(candidates: list, previous: list | None) -> tuple[list, bool]:
+    """Keep the same body instead of switching on small confidence differences."""
+    if not candidates:
+        return [], False
+    strongest = max(candidates, key=lambda p: sum(p[i][2] for i in (0, 5, 6, 7, 8, 9, 10)))
+    if not previous:
+        return strongest, False
+    width = max(1, math.dist(previous[5][:2], previous[6][:2]))
+    centre = ((previous[5][0] + previous[6][0]) / 2,
+              (previous[5][1] + previous[6][1]) / 2)
+
+    def distance(points):
+        next_centre = ((points[5][0] + points[6][0]) / 2,
+                       (points[5][1] + points[6][1]) / 2)
+        return math.dist(centre, next_centre) / width
+
+    nearest = min(candidates, key=distance)
+    if distance(nearest) <= 1.5:
+        return nearest, False
+    return strongest, True
+
+
+def classify_pose(keypoints: list[tuple[float, float, float]],
+                  evidence: dict[str, dict] | None = None) -> dict[str, float]:
+    evidence = evidence if evidence is not None else {}
     left_shoulder = _point(keypoints, 5)
     right_shoulder = _point(keypoints, 6)
     left_elbow = _point(keypoints, 7)
@@ -1095,9 +1157,9 @@ def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, floa
         width = max(1.0, math.dist(left_shoulder, right_shoulder))
         middle = (left_shoulder[0] + right_shoulder[0]) / 2
         direction = 1 if right_shoulder[0] > left_shoulder[0] else -1
-        for shoulder, elbow, wrist, opposite, outward in (
-            (left_shoulder, left_elbow, left_wrist, right_shoulder, direction),
-            (right_shoulder, right_elbow, right_wrist, left_shoulder, -direction),
+        for side, shoulder, elbow, wrist, opposite, outward in (
+            ("left", left_shoulder, left_elbow, left_wrist, right_shoulder, direction),
+            ("right", right_shoulder, right_elbow, right_wrist, left_shoulder, -direction),
         ):
             if elbow is None or wrist is None:
                 continue
@@ -1108,6 +1170,10 @@ def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, floa
                 and _angle_degrees(shoulder, elbow, wrist) <= 135
             ):
                 single_crossing = 0.85
+                evidence["arms_crossed"] = {
+                    "body_part": f"your {side} arm", "posture": "toward the opposite shoulder",
+                    "opposite_shoulder_distance": round(math.dist(wrist, opposite) / width, 3),
+                }
     required = (left_shoulder, right_shoulder, left_hip, right_hip)
     if any(point is None for point in required):
         return {"arms_crossed": single_crossing}
@@ -1138,10 +1204,19 @@ def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, floa
         return min(1.0, 0.8 + (horizontal_reach - 0.9) * 0.35)
 
     # A visible extended arm does not depend on tracking the other hand.
-    excursion_score = max(
-        lateral_extension(left_shoulder, left_elbow, left_wrist, -shoulder_direction),
-        lateral_extension(right_shoulder, right_elbow, right_wrist, shoulder_direction),
-    )
+    extensions = [
+        (lateral_extension(left_shoulder, left_elbow, left_wrist, -shoulder_direction),
+         "left", left_shoulder, left_elbow, left_wrist),
+        (lateral_extension(right_shoulder, right_elbow, right_wrist, shoulder_direction),
+         "right", right_shoulder, right_elbow, right_wrist),
+    ]
+    excursion_score, side, shoulder, elbow, wrist = max(extensions, key=lambda item: item[0])
+    if excursion_score > 0:
+        evidence["gesture_box_excursion"] = {
+            "body_part": f"your {side} arm", "elbow_angle": round(
+                _angle_degrees(shoulder, elbow, wrist), 1),
+            "sideways_reach": round(abs(wrist[0] - shoulder[0]) / shoulder_width, 3),
+        }
     if left_wrist is None or right_wrist is None:
         return {"arms_crossed": single_crossing, "gesture_box_excursion": excursion_score}
     center_x = (left_shoulder[0] + right_shoulder[0] + left_hip[0] + right_hip[0]) / 4
@@ -1160,6 +1235,11 @@ def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, floa
     if wrist_distance <= 0.35 and wrist_y >= shoulder_y + torso_height * 0.55:
         # Hands resting together at the abdomen need not be down at the hips.
         clasp_score = max(clasp_score, 0.8)
+    if clasp_score > 0:
+        evidence["hands_clasped_low"] = {
+            "body_part": "both hands", "wrist_separation": round(wrist_distance, 3),
+            "hand_height_fraction": round((wrist_y - shoulder_y) / torso_height, 3),
+        }
 
     if left_elbow is None or right_elbow is None:
         crossed_score = single_crossing
@@ -1197,11 +1277,28 @@ def classify_pose(keypoints: list[tuple[float, float, float]]) -> dict[str, floa
     if crossed_sides and torso_band and forearms_folded and forearms_across and opposite_contact:
         closeness = max(0.0, min(1.0, (0.55 - opposite_distance) / 0.35))
         crossed_score = 0.8 + 0.2 * closeness
-    folded_shape = forearms_folded and all(
-        abs(wrist[0] - elbow[0]) >= shoulder_width * 0.5
-        for wrist, elbow in ((left_wrist, left_elbow), (right_wrist, right_elbow))
+        evidence["arms_crossed"] = {"body_part": "both forearms",
+                                   "posture": "folded across your torso"}
+    # Folded forearms can occlude the hands, pulling predicted wrist positions
+    # toward the centre. Requiring both wrists to cross the midline loses the
+    # middle of an otherwise sustained fold. Use the visible elbow/forearm shape
+    # as a second route, not a sample-specific position or a generated verdict.
+    elbow_span = abs(left_elbow[0] - right_elbow[0]) / shoulder_width
+    inward_forearms = (
+        (left_wrist[0] - left_elbow[0]) * shoulder_direction >= shoulder_width * 0.4
+        and (right_elbow[0] - right_wrist[0]) * shoulder_direction >= shoulder_width * 0.4
     )
-    if crossed_score >= POSE_EVENT_THRESHOLDS["arms_crossed"] or folded_shape:
+    horizontal_forearms = all(abs(wrist[1] - elbow[1]) <= shoulder_width * 0.4
+                              for wrist, elbow in ((left_wrist, left_elbow),
+                                                   (right_wrist, right_elbow)))
+    folded_shape = (forearms_folded and inward_forearms and horizontal_forearms
+                    and elbow_span >= 1.02 and torso_band and opposite_distance <= 0.7
+                    and wrist_y <= shoulder_y + torso_height * 0.9)
+    if folded_shape:
+        crossed_score = max(crossed_score, 0.82)
+        evidence["arms_crossed"] = {"body_part": "both forearms",
+                                   "posture": "folded across your torso"}
+    if crossed_score >= POSE_EVENT_THRESHOLDS["arms_crossed"]:
         clasp_score = 0.0
 
     return {
@@ -1277,6 +1374,22 @@ def analyze_pose(
         raise UploadPracticeError(
             "POSE_MODEL_UNAVAILABLE", "The pose model could not be loaded. Please retry."
         ) from error
+    # Ultralytics initializes PyTorch's global thread pool during predictor setup.
+    # Apply our CPU budget AFTER that setup via its prediction-start callback.
+    requested_threads = getattr(settings, "upload_practice_cpu_threads", 0)
+    cpu_threads = min(max(1, requested_threads or min(4, (os.cpu_count() or 2) - 1)),
+                      os.cpu_count() or 1)
+
+    def limit_cpu_threads(predictor):
+        if predictor.device.type == "cpu":
+            import torch
+
+            if torch.get_num_threads() != cpu_threads:
+                torch.set_num_threads(cpu_threads)
+
+    model.add_callback("on_predict_start", limit_cpu_threads)
+    logger.info("Pose CPU thread budget=%s sample_fps=%s", cpu_threads,
+                settings.upload_practice_sample_fps)
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise UploadPracticeError("VIDEO_DECODE_FAILED", "The video could not be decoded.")
@@ -1291,20 +1404,34 @@ def analyze_pose(
     collector = PoseEventCollector(
         evidence_directory=evidence_directory,
         maximum_evidence_frames=settings.upload_practice_max_evidence_frames,
-        sample_interval=1 / sample_fps,
+        sample_interval=frame_step / source_fps,
     )
     frame_number = 0
     movement = MovementTracker()
+    background = BackgroundMotion()
+    previous_presenter = None
+    last_progress = -1
+    started = monotonic()
     try:
         while True:
-            ok, frame = capture.read()
-            if not ok:
+            # Advance compressed frames without allocating/converting a BGR
+            # image for the five out of six frames we do not analyze at 30 fps.
+            if not capture.grab():
                 break
             if frame_number % frame_step:
                 frame_number += 1
                 continue
+            ok, frame = capture.retrieve()
+            if not ok:
+                raise UploadPracticeError(
+                    "VIDEO_DECODE_FAILED", "A video frame could not be decoded.",
+                )
             timestamp = frame_number / source_fps
             frame_number += 1
+            current_progress = min(75, 20 + round(55 * frame_number / total_frames))
+            if progress and current_progress != last_progress:
+                progress(current_progress)
+                last_progress = current_progress
             try:
                 results = model.predict(frame, verbose=False, conf=0.25, max_det=3)
             except Exception as error:
@@ -1333,27 +1460,40 @@ def analyze_pose(
                 candidates.append(candidate)
                 if presenter_pose_is_reliable(candidate):
                     reliable_candidates.append(candidate)
-            keypoints = max(
-                reliable_candidates,
-                key=lambda candidate: sum(candidate[index][2] for index in (0, 5, 6, 7, 8, 9, 10)),
-                default=[],
-            )
+            keypoints, switched = select_presenter(reliable_candidates, previous_presenter)
+            if switched:
+                movement.observe(timestamp, [])
+                collector.observe(timestamp, {}, frame, [])
+            if keypoints:
+                previous_presenter = keypoints
             diagnostic_points = keypoints or max(
                 candidates, key=lambda candidate: sum(p[2] for p in candidate), default=[]
             )
             coverage.observe(
                 timestamp, diagnostic_points, bool(keypoints), frame.shape[1], frame.shape[0]
             )
-            detections = classify_pose(keypoints) if keypoints else {}
-            detections.update(movement.observe(timestamp, keypoints))
-            collector.observe(timestamp, detections, frame, keypoints)
-            if progress and frame_number % max(frame_step, round(total_frames / 20)) == 0:
-                progress(min(75, 20 + round(55 * frame_number / total_frames)))
+            camera_offset = background.observe(frame, candidates)
+            measurements: dict[str, dict] = {}
+            detections = classify_pose(keypoints, measurements) if keypoints else {}
+            detections.update(movement.observe(timestamp, keypoints, camera_offset))
+            measurements.update(movement.evidence)
+            collector.observe(timestamp, detections, frame, keypoints, measurements)
     finally:
         capture.release()
         if tracking is not None:
             tracking.update(coverage.result())
-    return collector.finish_all()
+        logger.info(
+            "Pose inference finished: source_frames=%s processed_until=%s elapsed_seconds=%.2f",
+            total_frames, frame_number, monotonic() - started,
+        )
+    candidates = collector.finish_all()
+    issues = prepare_gesture_events(candidates)
+    logger.info("Gesture rules complete: candidates=%s issues=%s", len(candidates), len(issues))
+    for event in issues:
+        logger.info("Gesture issue type=%s start=%s end=%s rule=%s measurements=%s",
+                    event["type"], event["start_seconds"], event["end_seconds"],
+                    event["detection"], len(event.get("measurements", [])))
+    return issues
 
 
 def _update_session(session_id: uuid.UUID, **values: Any) -> None:
@@ -1387,6 +1527,73 @@ def _update_session(session_id: uuid.UUID, **values: Any) -> None:
         database.commit()
 
 
+def _review_gestures(source, directory, metadata, progress):
+    started = monotonic()
+    progress.update("gestures", 1, "Reviewing body language")
+    tracking: dict = {}
+    events = analyze_pose(
+        source, directory,
+        progress=lambda value: progress.update(
+            "gestures", round((value - 20) * 80 / 55), "Reviewing body language",
+        ),
+        tracking=tracking, duration_seconds=metadata.duration_seconds,
+    )
+    logger.info("Pose tracking complete: status=%s samples=%s reliable_body=%s%% checks=%s",
+                tracking.get("status"), tracking.get("sample_count"),
+                tracking.get("reliable_body_percent"),
+                {c["type"]: c["status"] for c in tracking.get("checks", [])})
+    progress.update("gestures", 84, "Preparing gesture replays")
+    save_gesture_clips(source, directory, events, metadata.duration_seconds)
+    progress.update("gestures", 94, "Writing gesture feedback")
+    # Gesture wording uses measured movements, not speech or model verdicts.
+    coach_gesture_events(directory, events, [])
+    progress.update("gestures", 100, "Body-language review complete", "completed")
+    logger.info("Gesture track finished: events=%s elapsed_seconds=%.2f",
+                len(events), monotonic() - started)
+    return events, tracking
+
+
+def _review_speech(source, audio_path, directory, metadata, progress):
+    started = monotonic()
+    speech = {
+        "transcript": "", "timed_transcript": [], "word_count": 0,
+        "speech_duration_seconds": 0.0, "words_per_minute": 0.0,
+        "filler_events": [], "filler_clusters": [], "pause_events": [],
+        "pace_samples": [], "pace_events": [], "repetition_events": [],
+        "sensitive_term_flags": [],
+    }
+    if not metadata.has_audio:
+        progress.update("speech", 100, "No audio in this recording", "skipped")
+        return speech, []
+    progress.update("speech", 1, "Preparing audio")
+    if not extract_audio(source, audio_path):
+        raise UploadPracticeError("AUDIO_EXTRACTION_FAILED",
+                                  "The recording's audio could not be prepared. Please retry.")
+    silences = None
+    try:
+        silences = audio_silences(audio_path)
+    except (OSError, ValueError, EOFError, wave.Error):
+        logger.exception("Audio pause measurement failed; unverified pauses will be omitted")
+    progress.update("speech", 18, "Transcribing your speech")
+    speech = speech_metrics(transcribe_audio(audio_path), silences)
+    if silences is None:
+        speech["pause_events"] = []
+    progress.update("speech", 60, "Checking speech delivery")
+    # Speech findings are independent of body-language results. This also avoids
+    # gesture priorities displacing a speech finding before its excerpt is saved.
+    findings = build_coaching_report(speech, [], None)["findings"]
+    moments = speech_moments(speech, findings, metadata.duration_seconds)
+    progress.update("speech", 72, "Preparing speech excerpts")
+    if moments:
+        save_audio_excerpts(audio_path, directory, moments)
+        progress.update("speech", 85, "Writing speech recommendations")
+        coach_speech_moments(moments)
+    progress.update("speech", 100, "Speech review complete", "completed")
+    logger.info("Speech track finished: words=%s moments=%s elapsed_seconds=%.2f",
+                speech["word_count"], len(moments), monotonic() - started)
+    return speech, moments
+
+
 def run_upload_practice(session_id: uuid.UUID, source_key: str) -> None:
     source_path = storage_path(source_key)
     temporary_directory = source_path.parent
@@ -1408,50 +1615,15 @@ def run_upload_practice(session_id: uuid.UUID, source_key: str) -> None:
             video_codec=metadata.codec,
         )
         evidence_directory = storage_path(f"practice-reports/{user_id}/{session_id}")
-        _update_session(session_id, progress_percent=20)
-        pose_tracking: dict = {}
-        pose_events = analyze_pose(
-            source_path,
-            evidence_directory,
-            progress=lambda value: _update_session(session_id, progress_percent=value),
-            tracking=pose_tracking,
-            duration_seconds=metadata.duration_seconds,
-        )
-        _update_session(session_id, progress_percent=78, pose_tracking=pose_tracking)
-        logger.info(
-            "Upload practice %s pose tracking: status=%s samples=%s reliable_body=%s%% checks=%s",
-            session_id,
-            pose_tracking.get("status"),
-            pose_tracking.get("sample_count"),
-            pose_tracking.get("reliable_body_percent"),
-            {c["type"]: c["status"] for c in pose_tracking.get("checks", [])},
-        )
-        save_gesture_clips(source_path, evidence_directory, pose_events, metadata.duration_seconds)
-        _update_session(session_id, progress_percent=80)
-        speech = {
-            "transcript": "",
-            "timed_transcript": [],
-            "word_count": 0,
-            "speech_duration_seconds": 0.0,
-            "words_per_minute": 0.0,
-            "filler_events": [],
-            "filler_clusters": [],
-            "pause_events": [],
-            "pace_samples": [],
-            "pace_events": [],
-            "repetition_events": [],
-            "sensitive_term_flags": [],
-        }
+        progress = PracticeProgress(lambda **values: _update_session(session_id, **values))
         audio_path = temporary_directory / "speech.wav"
-        if metadata.has_audio:
-            if extract_audio(source_path, audio_path):
-                speech = speech_metrics(transcribe_audio(audio_path))
-        _update_session(session_id, progress_percent=90)
-        coaching = build_coaching_report(speech, pose_events, pose_tracking)
-        moments = speech_moments(speech, coaching["findings"], metadata.duration_seconds)
-        if moments:
-            save_audio_excerpts(audio_path, evidence_directory, moments)
-            coach_speech_moments(moments)
+        started = monotonic()
+        (pose_events, pose_tracking), (speech, moments) = run_practice_tracks(
+            lambda: _review_gestures(source_path, evidence_directory, metadata, progress),
+            lambda: _review_speech(source_path, audio_path, evidence_directory, metadata, progress),
+        )
+        logger.info("Parallel recording review finished: session=%s elapsed_seconds=%.2f",
+                    session_id, monotonic() - started)
         _update_session(
             session_id,
             status="completed",
@@ -1470,6 +1642,7 @@ def run_upload_practice(session_id: uuid.UUID, source_key: str) -> None:
             repetition_events=speech["repetition_events"],
             sensitive_term_flags=speech["sensitive_term_flags"],
             pose_events=pose_events,
+            pose_tracking=pose_tracking,
             processing_error_code=None,
             processing_error_message=None,
             completed_at=datetime.now(UTC),

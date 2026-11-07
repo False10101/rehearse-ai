@@ -17,9 +17,9 @@ def test_excerpt_has_source_text_and_bounded_audio_range() -> None:
     }
     moments = speech_evidence.speech_moments(speech, [], 60)
     assert len(moments) == 1
-    assert moments[0]["end_seconds"] - moments[0]["start_seconds"] <= 35
+    assert moments[0]["end_seconds"] == 59
     assert moments[0]["transcript_excerpt"].startswith("word6 ")
-    assert moments[0]["transcript_excerpt"].endswith("word40")
+    assert moments[0]["transcript_excerpt"].endswith("word58")
 
 
 def test_closing_context_is_sent_to_coach(monkeypatch):
@@ -43,7 +43,7 @@ def test_closing_context_is_sent_to_coach(monkeypatch):
                     "id": 1,
                     "anchor": "Thanks",
                     "observation": "A deliberate closing.",
-                    "recommendation": "Keep this pause.",
+                    "recommendation": "Keep the pause after Thanks.",
                     "suggested_delivery": "Thanks. [pause]",
                 }
             ]
@@ -167,7 +167,7 @@ def test_quote_formatting_does_not_reject_source_phrase(monkeypatch):
                     "id": 1,
                     "anchor": "IT'S five",
                     "observation": "Emphasize five.",
-                    "recommendation": "Pause here.",
+                    "recommendation": "Pause after It's five.",
                     "suggested_delivery": "It's five. [pause]",
                 }
             ]
@@ -194,3 +194,33 @@ def test_retry_does_not_rewrite_ready_moments(monkeypatch):
     moments = [{"id": 1, "coaching_status": "ready", "recommendation": "Existing advice"}]
     speech_evidence.coach_speech_moments(moments)
     assert moments[0]["recommendation"] == "Existing advice"
+
+
+def test_all_displayed_pace_intervals_keep_evidence_after_twelfth_moment():
+    speech = {
+        "timed_transcript": [{"word": f"word{i}", "start": i, "end": i + .5} for i in range(300)],
+        "pace_events": [{"type": "fast", "start_seconds": i * 15, "end_seconds": i * 15 + 5}
+                        for i in range(18)],
+    }
+    moments = speech_evidence.speech_moments(speech, [], 300)
+    assert len(moments) == 18
+    assert moments[-1]["event_start_seconds"] == 255
+    assert "word255" in moments[-1]["transcript_excerpt"]
+
+
+def test_source_anchor_without_excerpt_specific_advice_is_retried(monkeypatch):
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append(1)
+        return {"moments": [{"id": 1, "anchor": "carbon nanotubes",
+                             "observation": "Your speech needs improvement.",
+                             "recommendation": "Speak clearly and slow down.",
+                             "suggested_delivery": "carbon nanotubes"}]}
+
+    monkeypatch.setattr(speech_evidence, "_request_json", request)
+    moments = [{"id": 1, "transcript_excerpt": "carbon nanotubes form a network."}]
+    speech_evidence.coach_speech_moments(moments)
+    assert len(calls) == 3
+    assert moments[0]["coaching_status"] == "unavailable"
+    assert "recommendation" not in moments[0]

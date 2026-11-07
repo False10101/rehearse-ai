@@ -1,7 +1,9 @@
 # ruff: noqa: E501
 
+import json
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Literal
 
@@ -12,6 +14,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.presentations import authenticated_user, owned_presentation
+from app.core.config import get_settings
 from app.db.models import (
     Job,
     Presentation,
@@ -142,6 +145,30 @@ class EnhanceSelectionRequest(BaseModel):
     tone: Tone = "auto"
     style: Style = "natural"
     audience_level: AudienceLevel = "general"
+
+
+class AcceptEnhancementRequest(EnhanceSelectionRequest):
+    replacement_paragraphs: list[str] = Field(min_length=1)
+
+
+class EnhancementPreviewResponse(BaseModel):
+    slide_number: int
+    base_revision: int
+    before: list[str]
+    after: list[str]
+    changed: bool
+
+
+class TranscriptHistoryResponse(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    base_revision: int
+    result_revision: int
+    before: str | None
+    after: str
+    tone: str | None = None
+    style: str | None = None
+    audience_level: str | None = None
 
 
 class SaveParagraph(BaseModel):
@@ -443,12 +470,49 @@ def _require_current_transcript(
     parent = session.get(PresentationTranscript, transcript.presentation_transcript_id)
     if parent is None or parent.presentation_id != presentation.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript not found.")
+    latest, _ = _latest_by_slide(session, presentation.id)
+    if latest.get(slide.id) is None or latest[slide.id].id != transcript.id:
+        raise HTTPException(
+            status_code=409, detail="A newer script exists. Reload it before applying this change."
+        )
     if transcript.revision != base_revision:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This script changed elsewhere. Reload it before editing again.",
         )
     return transcript
+
+
+def _neighboring_script_context(
+    session: Session, presentation: Presentation, current_slide: Slide,
+) -> list[dict]:
+    """Nearest written script on each side, for continuity rather than evidence.
+
+    Single-slide generation sees the latest human edits. Parallel bulk requests
+    use a snapshot of saved scripts instead of depending on in-flight results.
+    """
+    latest, _ = _latest_by_slide(session, presentation.id)
+    slides = list(session.scalars(
+        select(Slide).where(Slide.presentation_id == presentation.id).order_by(Slide.slide_number)
+    ))
+    contexts = []
+    before = [slide for slide in slides if slide.slide_number < current_slide.slide_number]
+    after = [slide for slide in slides if slide.slide_number > current_slide.slide_number]
+    for candidates in (reversed(before), iter(after)):
+        for slide in candidates:
+            script = latest.get(slide.id)
+            if script is None:
+                continue
+            parts = [p.current_text for p in _paragraphs(session, script.id) if p.current_text.strip()]
+            if not parts:
+                continue
+            contexts.append({
+                "slide_number": slide.slide_number,
+                "title": slide.title,
+                "script": "\n\n".join(parts)[:6000],
+            })
+            break
+    return contexts
 
 
 def _create_ai_slide_transcript(
@@ -472,7 +536,23 @@ def _create_ai_slide_transcript(
         next_slide.extracted_content if next_slide else None,
         [item.extracted_content for item in deck_slides] if deck_slides else None,
         audience_level=audience_level,
+        neighboring_scripts=_neighboring_script_context(session, presentation, slide),
     )
+    return _save_ai_slide_transcript(
+        session, presentation, slide, result, duration_seconds, tone, style, audience_level
+    )
+
+
+def _save_ai_slide_transcript(
+    session: Session,
+    presentation: Presentation,
+    slide: Slide,
+    result: dict,
+    duration_seconds: int,
+    tone: Tone,
+    style: Style,
+    audience_level: AudienceLevel,
+) -> SlideTranscript:
     parent = PresentationTranscript(
         presentation_id=presentation.id,
         mode="ai-gen",
@@ -558,7 +638,10 @@ def run_generate_all_transcripts(
             return
         job = session.scalar(
             select(Job)
-            .where(Job.target_id == presentation.id, Job.job_type == "transcript_generate_all")
+            .where(
+                Job.target_id == presentation.id,
+                Job.job_type == "transcript_generate_all",
+            )
             .order_by(Job.created_at.desc())
         )
         if job is None:
@@ -577,50 +660,116 @@ def run_generate_all_transcripts(
         job.started_at = datetime.now().astimezone()
         session.commit()
         latest, _ = _latest_by_slide(session, presentation.id)
-        for index, slide in enumerate(slides, 1):
+        # Snapshot source data and saved continuity on this thread. Workers only
+        # call the provider; SQLAlchemy sessions and ORM objects stay here.
+        saved_scripts = []
+        written_slide_ids = set()
+        for slide in deck_slides:
             existing = latest.get(slide.id)
-            has_content = existing is not None and any(
-                paragraph.current_text.strip() for paragraph in _paragraphs(session, existing.id)
+            parts = (
+                [
+                    p.current_text
+                    for p in _paragraphs(session, existing.id)
+                    if p.current_text.strip()
+                ]
+                if existing
+                else []
             )
-            if not has_content:
-                last_error: Exception | None = None
-                for attempt in range(1, 4):
+            if parts:
+                written_slide_ids.add(slide.id)
+                saved_scripts.append(
+                    {
+                        "slide_number": slide.slide_number,
+                        "title": slide.title,
+                        "script": "\n\n".join(parts)[:6000],
+                    }
+                )
+        deck_context = [slide.extracted_content for slide in deck_slides]
+        tasks = []
+        for slide in slides:
+            if slide.id in written_slide_ids:
+                continue
+            deck_index = deck_index_by_id[slide.id]
+            before = [item for item in saved_scripts if item["slide_number"] < slide.slide_number]
+            after = [item for item in saved_scripts if item["slide_number"] > slide.slide_number]
+            tasks.append(
+                (
+                    slide.id,
+                    {
+                        "slide": slide.extracted_content,
+                        "duration_seconds": duration_seconds,
+                        "tone": tone,
+                        "style": style,
+                        "audience_level": audience_level,
+                        "previous_slide": deck_context[deck_index - 1] if deck_index > 0 else None,
+                        "next_slide": deck_context[deck_index + 1]
+                        if deck_index + 1 < len(deck_context)
+                        else None,
+                        "deck_slides": deck_context,
+                        "neighboring_scripts": before[-1:] + after[:1],
+                    },
+                )
+            )
+        completed = len(slides) - len(tasks)
+        job.progress_percent = round(completed / len(slides) * 100) if slides else 100
+        session.commit()  # Release the DB connection while waiting for provider results.
+        first_error = None
+        if tasks:
+            workers = max(1, min(get_settings().transcript_generation_workers, len(tasks)))
+            logger.info(
+                "Bulk transcript generation presentation=%s pending=%s skipped=%s workers=%s",
+                presentation_id,
+                len(tasks),
+                completed,
+                workers,
+            )
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="transcript-gen"
+            ) as pool:
+                futures = {
+                    pool.submit(generate_script, **payload): slide_id for slide_id, payload in tasks
+                }
+                for future in as_completed(futures):
+                    slide_id = futures[future]
                     try:
-                        with session.begin_nested():
-                            deck_index = deck_index_by_id[slide.id]
-                            transcript = _create_ai_slide_transcript(
-                                session,
-                                presentation,
-                                slide,
-                                duration_seconds,
-                                tone,
-                                style,
-                                deck_slides[deck_index - 1] if deck_index > 0 else None,
-                                deck_slides[deck_index + 1]
-                                if deck_index + 1 < len(deck_slides)
-                                else None,
-                                deck_slides,
-                                audience_level=audience_level,
-                            )
-                        latest[slide.id] = transcript
-                        last_error = None
-                        break
-                    except Exception as error:
-                        last_error = error
-                        logger.exception(
-                            "Bulk transcript generation attempt %s of 3 failed for presentation %s slide %s",
-                            attempt,
-                            presentation.id,
-                            slide.slide_number,
+                        result = future.result()
+                        # Content may have been written while this request ran.
+                        # Recheck before saving so a late result does not replace it.
+                        session.expire_all()
+                        current, _ = _latest_by_slide(session, presentation_id)
+                        existing = current.get(slide_id)
+                        has_content = existing is not None and any(
+                            p.current_text.strip() for p in _paragraphs(session, existing.id)
                         )
-                        if isinstance(error, ProviderRequestError):
-                            # The provider helper already waited/retried. Never multiply
-                            # those attempts with the per-slide output retry loop.
-                            break
-                if last_error is not None:
-                    raise last_error
-            job.progress_percent = round(index / len(slides) * 100)
-            session.commit()
+                        if not has_content:
+                            with session.begin_nested():
+                                slide = session.get(Slide, slide_id)
+                                _save_ai_slide_transcript(
+                                    session,
+                                    presentation,
+                                    slide,
+                                    result,
+                                    duration_seconds,
+                                    tone,
+                                    style,
+                                    audience_level,
+                                )
+                        job.progress_percent = round((completed + 1) / len(slides) * 100)
+                        session.commit()
+                        completed += 1
+                    except Exception as error:
+                        session.rollback()
+                        logger.exception(
+                            "Bulk transcript generation failed presentation=%s slide_id=%s",
+                            presentation_id,
+                            slide_id,
+                        )
+                        if first_error is None:
+                            first_error = error
+                        # Other requests may already have produced useful scripts.
+                        # Save their results too; the batch is marked failed afterward.
+            if first_error is not None:
+                raise first_error
         job.status = "completed"
         job.progress_percent = 100
         job.completed_at = datetime.now().astimezone()
@@ -633,7 +782,10 @@ def run_generate_all_transcripts(
         session.rollback()
         job = session.scalar(
             select(Job)
-            .where(Job.target_id == presentation_id, Job.job_type == "transcript_generate_all")
+            .where(
+                Job.target_id == presentation_id,
+                Job.job_type == "transcript_generate_all",
+            )
             .order_by(Job.created_at.desc())
         )
         if job:
@@ -793,6 +945,36 @@ def enhance_transcript_selection(
     session: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> SlideTranscriptResponse:
+    return _enhance_transcript_selection(presentation_id, request, session, user)
+
+
+@router.post("/enhance/preview", response_model=EnhancementPreviewResponse)
+def preview_transcript_selection(
+    presentation_id: uuid.UUID,
+    request: EnhanceSelectionRequest,
+    session: Session = Depends(get_db_session),
+    user=Depends(authenticated_user),
+):
+    return _enhance_transcript_selection(presentation_id, request, session, user, preview=True)
+
+
+@router.post("/enhance/accept", response_model=SlideTranscriptResponse)
+def accept_transcript_selection(
+    presentation_id: uuid.UUID,
+    request: AcceptEnhancementRequest,
+    session: Session = Depends(get_db_session),
+    user=Depends(authenticated_user),
+):
+    # Accept exactly the reviewed wording; never call the model again here.
+    return _enhance_transcript_selection(
+        presentation_id, request, session, user,
+        replacements_override=request.replacement_paragraphs,
+    )
+
+
+def _enhance_transcript_selection(
+    presentation_id, request, session, user, *, preview=False, replacements_override=None,
+):
     presentation = owned_presentation(session, user.id, presentation_id)
     transcript = session.get(SlideTranscript, request.slide_transcript_id)
     if transcript is None:
@@ -839,9 +1021,23 @@ def enhance_transcript_selection(
             detail="The selection includes an empty paragraph. Select text within written paragraphs.",
         )
     try:
-        replacements = enhance_selection(
+        replacements = replacements_override if replacements_override is not None else enhance_selection(
             slide.extracted_content, selected_parts, request.tone, request.style,
             audience_level=request.audience_level,
+            selection_boundaries={
+                "first_part_starts_paragraph": request.start.offset == 0,
+                "last_part_ends_paragraph": request.end.offset == len(end.current_text),
+            },
+            surrounding_text={
+                "before": "\n\n".join(
+                    [p.current_text for p in paragraphs if p.position < start.position]
+                    + [start.current_text[:request.start.offset]]
+                )[-6000:],
+                "after": "\n\n".join(
+                    [end.current_text[request.end.offset:]]
+                    + [p.current_text for p in paragraphs if p.position > end.position]
+                )[:6000],
+            },
         )
     except Exception as error:
         logger.exception(
@@ -854,6 +1050,25 @@ def enhance_transcript_selection(
             detail=str(error) if isinstance(error, ProviderRequestError)
             else "Text enhancement could not finish. Please retry.",
         ) from error
+
+    if len(replacements) != len(selected_parts) or any(not part.strip() for part in replacements):
+        raise HTTPException(status_code=422, detail="The replacement must preserve the selected paragraphs.")
+    if preview:
+        return EnhancementPreviewResponse(
+            slide_number=slide.slide_number, base_revision=transcript.revision,
+            before=selected_parts, after=replacements, changed=selected_parts != replacements,
+        )
+    # Lock only when writing, after the potentially slow provider call. Refresh
+    # catches another tab saving while this request was waiting for the model.
+    session.refresh(transcript, with_for_update=True)
+    _require_current_transcript(
+        session, presentation, slide, request.slide_transcript_id, request.base_revision
+    )
+    if transcript.revision != request.base_revision:
+        raise HTTPException(status_code=409, detail="This script changed. Reload it and review a new suggestion.")
+    session.refresh(start)
+    if end.id != start.id:
+        session.refresh(end)
 
     start_prefix = start.current_text[: request.start.offset]
     end_suffix = end.current_text[request.end.offset :]
@@ -892,7 +1107,13 @@ def enhance_transcript_selection(
             start_offset=request.start.offset,
             end_paragraph_id=end.id,
             end_offset=request.end.offset,
-            replacement_text="\n\n".join(replacements),
+            replacement_text=json.dumps({
+                "format": "enhancement-review-v1",
+                "before": "\n\n".join(selected_parts),
+                "after": "\n\n".join(replacements),
+                "tone": request.tone, "style": request.style,
+                "audience_level": request.audience_level,
+            }, ensure_ascii=False),
             source="human-enhance",
         )
     )
@@ -928,20 +1149,8 @@ def save_transcript_script(
 
     retained_ids = set(submitted_ids)
     removed_ids = [paragraph.id for paragraph in paragraphs if paragraph.id not in retained_ids]
-    if removed_ids:
-        session.execute(
-            delete(TranscriptRevision).where(
-                or_(
-                    TranscriptRevision.start_paragraph_id.in_(removed_ids),
-                    TranscriptRevision.end_paragraph_id.in_(removed_ids),
-                )
-            )
-        )
     for paragraph in paragraphs:
-        if paragraph.id not in retained_ids:
-            session.delete(paragraph)
-        else:
-            paragraph.position = -(100_000 + paragraph.position)
+        paragraph.position = -(100_000 + paragraph.position)
     session.flush()
 
     saved_paragraphs: list[TranscriptParagraph] = []
@@ -968,6 +1177,23 @@ def save_transcript_script(
 
     first = saved_paragraphs[0]
     last = saved_paragraphs[-1]
+    if removed_ids:
+        # History contains its own before/after text. Re-anchor its foreign keys
+        # before deleting paragraphs so removing text cannot erase the history.
+        revisions = session.scalars(select(TranscriptRevision).where(
+            or_(TranscriptRevision.start_paragraph_id.in_(removed_ids),
+                TranscriptRevision.end_paragraph_id.in_(removed_ids))
+        ))
+        for revision in revisions:
+            if revision.start_paragraph_id in removed_ids:
+                revision.start_paragraph_id = first.id
+            if revision.end_paragraph_id in removed_ids:
+                revision.end_paragraph_id = first.id
+        session.flush()
+        for paragraph in paragraphs:
+            if paragraph.id in removed_ids:
+                session.delete(paragraph)
+        session.flush()
     transcript.revision += 1
     session.flush()
     current = [item.current_text for item in saved_paragraphs if item.current_text]
@@ -1000,3 +1226,35 @@ def save_transcript_script(
     )
     session.commit()
     return _response_for_slide(session, slide, transcript, "human-enhance", presentation)
+
+
+@router.get("/slides/{slide_number}/history", response_model=list[TranscriptHistoryResponse])
+def transcript_selection_history(
+    presentation_id: uuid.UUID,
+    slide_number: int,
+    session: Session = Depends(get_db_session),
+    user=Depends(authenticated_user),
+):
+    presentation = owned_presentation(session, user.id, presentation_id)
+    slide = _slide_for_number(session, presentation, slide_number)
+    rows = session.scalars(
+        select(TranscriptRevision).join(SlideTranscript,
+            SlideTranscript.id == TranscriptRevision.slide_transcript_id)
+        .where(SlideTranscript.slide_id == slide.id, TranscriptRevision.source == "human-enhance")
+        .order_by(TranscriptRevision.created_at.desc(), TranscriptRevision.result_revision.desc())
+    )
+    history = []
+    for row in rows:
+        try:
+            detail = json.loads(row.replacement_text)
+        except (ValueError, TypeError):
+            detail = None
+        if not isinstance(detail, dict) or detail.get("format") != "enhancement-review-v1":
+            detail = {"before": None, "after": row.replacement_text}
+        history.append(TranscriptHistoryResponse(
+            id=row.id, created_at=row.created_at, base_revision=row.base_revision,
+            result_revision=row.result_revision, before=detail.get("before"),
+            after=detail["after"], tone=detail.get("tone"), style=detail.get("style"),
+            audience_level=detail.get("audience_level"),
+        ))
+    return history

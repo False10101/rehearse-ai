@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { gestureMarkers, gestureNeedsAdjustment, gestureTicks } from "@/lib/gesture-timeline";
 
-type Event = { type: string; label: string; start_seconds: number; duration_seconds: number; feedback: string; evidence_image_url: string | null; evidence_video_url?: string | null };
+type GestureCoaching = { assessment: "adjustment"; title: string; observation: string; impact: string; recommendation: string; evidence_seconds: number[] };
+type Event = { type: string; label: string; start_seconds: number; end_seconds?: number; duration_seconds: number; feedback: string; evidence_image_url: string | null; evidence_video_url?: string | null; coaching?: GestureCoaching | null; detection?: { is_issue?: boolean } | null };
 export type PoseTracking = {
   status: "reliable" | "limited" | "insufficient";
   reliable_body_percent: number;
@@ -11,48 +13,25 @@ export type PoseTracking = {
 };
 const time = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-type GestureAdvice = { title: string; observation: string; impact: string; action: string };
-const advice: Record<string, GestureAdvice> = {
-  arms_crossed: {
-    title: "Release crossed arms between points",
-    observation: "An arm reached across your body toward the opposite shoulder, or your forearms appeared folded across your torso.",
-    impact: "If this becomes your resting pose, it can limit the gestures you use to explain or emphasize your message. A brief, intentional crossing is not automatically a problem.",
-    action: "Replay this moment. If the crossing was unintentional, release your arms at the next transition and use a comfortable resting position before your next gesture.",
-  },
-  repeated_head_movement: {
-    title: "Let your head settle between ideas",
-    observation: "Repeated head turns or sideways tilts were estimated around this moment. This does not establish where your eyes were looking or whether you were reading notes.",
-    impact: "Repeated back-and-forth movement may compete with what you are saying. Looking toward different listeners and nodding to emphasize a point can still be useful.",
-    action: "Try the same passage again, letting your head settle while you finish each idea. Keep audience glances that serve a purpose rather than trying to stay completely still.",
-  },
-  repeated_swaying: {
-    title: "Use a steadier stance for key points",
-    observation: "Your upper body appeared to shift from side to side repeatedly.",
-    impact: "Repeated swaying can draw attention away from the explanation when the movement is unrelated to the message.",
-    action: "Replay the passage, then practise it with your weight comfortably balanced. Move deliberately at a transition, and settle before delivering the next key point.",
-  },
-  hand_near_face: {
-    title: "Bring your hand back after an adjustment",
-    observation: "Your hand appeared near your face for a sustained moment or on repeated occasions. The video check does not establish whether you touched your face.",
-    impact: "Repeated incidental adjustments can compete with your message. A quick adjustment or a gesture that illustrates your point may be entirely appropriate.",
-    action: "Watch what the hand was doing. If it was an incidental adjustment, finish it and return your hand to a relaxed position before continuing your explanation.",
-  },
-  hands_clasped_low: {
-    title: "Give your hands room to support the message",
-    observation: "Your hands appeared close together near the lower part of your torso.",
-    impact: "Keeping them fixed there can reduce visible emphasis. Resting your hands together briefly is not itself a mistake.",
-    action: "If your hands stayed fixed through a key point, try one natural gesture to illustrate it, then return to a comfortable resting position. You do not need to gesture constantly.",
-  },
-  gesture_box_excursion: {
-    title: "Bring wide gestures back after the emphasis",
-    observation: "An arm appeared close to a full sideways extension.",
-    impact: "A large gesture can be effective emphasis, but holding it or repeating it without a clear purpose may pull attention away from your words.",
-    action: "Check whether the reach supported the point. Keep it if it did; otherwise try a smaller reach and bring the arm back when the emphasis is finished.",
-  },
-};
+// Each icon depicts the observed movement, not an inferred emotion or intention.
+function GestureIcon({ type }: { type: string }) {
+  return <svg viewBox="0 0 32 32" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="16" cy="7" r="3" /><path d="M12 13h8l2 12H10zM12 25l-1 5m9-5 1 5" />
+    {type === "arms_crossed" ? <path d="m9 14 12 7 3-7M23 14l-12 7-3-7" />
+      : type === "gesture_box_excursion" ? <path d="M12 14 2 12m18 2 10-2M2 12l3-2m25 2-3-2" />
+      : type === "hand_near_face" ? <path d="m12 14-5 6-2-10 6-1M20 14l5 9" />
+      : type === "hands_clasped_low" ? <><path d="m10 14-3 7 8 3m7-10 3 7-8 3" /><circle cx="16" cy="24" r="2" /></>
+      : type === "repeated_swaying" ? <path d="M6 15H1m0 0 2-2m-2 2 2 2m23-2h5m0 0-2-2m2 2-2 2" />
+      : type === "repeated_head_movement" ? <path d="M10 4H3m0 0 2-2M3 4l2 2m17-2h7m0 0-2-2m2 2-2 2" />
+      : <path d="m12 14-6 8m14-8 6 8" />}
+  </svg>;
+}
 
-function GestureGroup({ events, token }: { events: Event[]; token: string | null }) {
-  const [selected, setSelected] = useState(0);
+const gestureLabel = (event: Event) => event.type === "gesture_box_excursion" ? "Wide sideways reach" : event.label;
+const momentKey = (event: Event) => `${event.type}:${event.start_seconds}:${event.duration_seconds}`;
+
+
+function GestureReview({ event, token }: { event: Event; token: string | null }) {
   type Replay = { url: string; video: boolean; timestamp: number; label: string };
   const [replay, setReplay] = useState<Replay | null>(null);
   const [incoming, setIncoming] = useState<Replay | null>(null);
@@ -60,13 +39,7 @@ function GestureGroup({ events, token }: { events: Event[]; token: string | null
   const urls = useRef(new Map<string, string>());
   const player = useRef<HTMLVideoElement | null>(null);
   const [failed, setFailed] = useState(false);
-  const event = events[Math.min(selected, events.length - 1)];
-  const coaching = advice[event.type] ?? {
-    title: event.label,
-    observation: event.feedback,
-    impact: "A movement is worth changing only if it distracts from or makes your message harder to follow.",
-    action: "Replay the moment and compare it with your intended emphasis. Try the passage again with a more deliberate movement if needed.",
-  };
+  const coaching = event.coaching;
   const path = event.evidence_video_url || event.evidence_image_url;
   useEffect(() => {
     const cache = urls.current;
@@ -97,29 +70,77 @@ function GestureGroup({ events, token }: { events: Event[]; token: string | null
         ? <video ref={pending ? undefined : player} src={item.url} controls={!pending && !loading && !failed} playsInline preload="auto" onLoadedData={pending ? ready : undefined} onError={pending ? mediaFailed : undefined} tabIndex={pending ? -1 : 0} aria-label={`Review gesture at ${time(item.timestamp)}`} />
         : <img src={item.url} alt={pending ? "" : `Detected ${item.label.toLowerCase()} at ${time(item.timestamp)}`} onLoad={pending ? ready : undefined} onError={pending ? mediaFailed : undefined} />}</div>;
     })}
-      {(loading || failed || !path) && <p className="practice-gesture-load-status" role="status">{failed ? "The selected replay could not be loaded. Refresh to try again." : path ? "Loading selected replay…" : "This older report has no saved replay for this moment."}</p>}
+      {(loading || failed || !path) && <p className="practice-gesture-load-status" role="status">{failed ? "The replay could not be loaded. Refresh to try again." : path ? "Loading replay…" : "The replay for this moment is unavailable."}</p>}
     </div>
       <p className="practice-gesture-caption">{event.evidence_video_url ? "Silent replay with the surrounding context." : "A captured moment from your recording."}</p>
-      {events.length > 1 && <div className="practice-gesture-moments"><p className="practice-eyebrow">Other moments to review</p>
-        <div className="practice-intervals" aria-label={`Choose a ${event.label.toLowerCase()} moment`}>{events.map((item, i) => <button key={`${item.start_seconds}-${i}`} type="button" aria-label={`Review at ${time(item.start_seconds)}`} aria-pressed={i === selected} className={i === selected ? "is-selected" : ""} onClick={() => setSelected(i)}>{time(item.start_seconds)}</button>)}</div>
-      </div>}
     </div>
-    <div className="practice-gesture-coaching" aria-live="polite"><p className="practice-eyebrow">{event.label}</p><h3>{coaching.title}</h3>
+    <div className="practice-gesture-coaching" aria-live="polite"><p className="practice-gesture-selected-label"><GestureIcon type={event.type} />{gestureLabel(event)} <span>{time(event.start_seconds)}–{time(event.end_seconds ?? event.start_seconds + event.duration_seconds)}</span></p>
+      {coaching && <><p className="practice-eyebrow">An adjustment to try</p><h3>{coaching.title}</h3>
       <div className="practice-gesture-explanation"><h4>What happened</h4><p>{coaching.observation}</p></div>
       <div className="practice-gesture-explanation"><h4>Why it matters</h4><p>{coaching.impact}</p></div>
-      <div className="practice-gesture-action"><h4>Try this next</h4><p>{coaching.action}</p></div>
+      <div className="practice-gesture-action"><h4>Try this next</h4><p>{coaching.recommendation}</p></div></>}
     </div>
   </article>;
 }
 
-export function PracticeGestures({ events, token, tracking }: { events: Event[]; token: string | null; tracking?: PoseTracking | null }) {
+export function PracticeGestures({ events, token, tracking, duration = 0 }: { events: Event[]; token: string | null; tracking?: PoseTracking | null; duration?: number }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const ordered = events.filter(gestureNeedsAdjustment).sort((a, b) => a.start_seconds - b.start_seconds);
+  const active = ordered.find(event => momentKey(event) === selected) ?? ordered[0];
   const groups = new Map<string, Event[]>();
-  for (const event of events) groups.set(event.type, [...(groups.get(event.type) ?? []), event]);
+  for (const event of ordered) groups.set(event.type, [...(groups.get(event.type) ?? []), event]);
+  const end = Math.max(1, duration, ...events.map(event => event.end_seconds ?? event.start_seconds + event.duration_seconds));
+  // Keep short and nearby detections individually clickable instead of drawing
+  // markers on top of one another. Different behaviors retain separate rows.
+  const timelineWidth = Math.max(560, end * 3);
+  const axisPlot = useRef<HTMLDivElement | null>(null);
+  const [plotWidth, setPlotWidth] = useState(timelineWidth);
+  const hasIssues = Boolean(active);
+  useEffect(() => {
+    const element = axisPlot.current;
+    if (!element) return;
+    const measure = () => setPlotWidth(element.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasIssues]);
+  const ticks = gestureTicks(end);
   return <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">On camera</p><h2>Gestures & body language</h2><p className="practice-muted">See what happened, why it may matter, and one adjustment to try. Keep deliberate movements that support your message.</p></div></div>
     {tracking?.status !== "reliable" && <div className="practice-gesture-warning" role="status">
-      <strong>{!tracking ? "This older report has a limited visibility check" : tracking.status === "insufficient" ? "Your movements weren’t clear enough to review fully" : "Some movements couldn’t be reviewed clearly"}</strong>
-      <p>{!tracking ? "You can review the saved moments below. Upload again for a more complete review." : tracking.person_visible_percent === 0 ? "Keep the speaker visible in the recording, with the face, arms and torso in frame." : "Keep your face, arms and torso in frame with clear lighting. No flagged moments does not mean the unclear parts were problem-free."}</p>
+      <strong>{!tracking ? "Your saved moments are ready to watch" : tracking.status === "insufficient" ? "The speaker is difficult to see" : "Some parts of the recording are difficult to see"}</strong>
+      <p>{!tracking ? "Choose a moment below to watch it and get feedback." : "For clearer feedback, keep your face, arms and torso in view with good lighting."}</p>
     </div>}
-    {groups.size ? Array.from(groups, ([key, items]) => <GestureGroup key={key} events={items} token={token} />) : <p className="practice-empty">{tracking?.status === "reliable" ? "No gesture moments were flagged for review. Keep using natural movements that support your message." : "No gesture moments were saved for review. Improve the visibility of the speaker and try another recording."}</p>}
+    {active ? <>
+      <div className="practice-gesture-timeline-heading"><h3>Gestures to improve</h3><p>Choose an icon to see the replay and an adjustment to try. Different rows can happen at the same time.</p></div>
+      <div className="practice-gesture-timeline-scroll" role="region" aria-label="Gesture timeline, scroll horizontally for later moments" tabIndex={0}>
+        <div className="practice-gesture-timeline" style={{ minWidth: timelineWidth + 228 }}>
+          <div className="practice-gesture-axis"><span>Recording time</span><div ref={axisPlot}>{ticks.map(tick => <span key={tick.seconds} style={{ left: `${tick.leftPercent}%` }}>{time(tick.seconds)}</span>)}</div></div>
+          {Array.from(groups, ([type, items]) => {
+            // Percentages place bars on the same scale as the axis at every
+            // viewport width. Measured pixels are used only for click/label lanes.
+            const { markers, lanes } = gestureMarkers(items, end, plotWidth);
+            return <div className="practice-gesture-track" key={type}>
+              <div className="practice-gesture-track-label"><GestureIcon type={type} /><span>{gestureLabel(items[0])}</span></div>
+              <div className="practice-gesture-track-moments" style={{ height: lanes * 78 }}>
+                {ticks.map(tick => <i aria-hidden="true" className="practice-gesture-grid-line" key={tick.seconds} style={{ left: `${tick.leftPercent}%` }} />)}
+                {markers.map(({ item, leftPercent, widthPercent, hitWidth, lane }, index) => <div key={`${item.start_seconds}-${index}`} className={`practice-gesture-marker${item === active ? " is-selected" : ""}`} style={{ left: `${leftPercent}%`, width: `${widthPercent}%`, top: lane * 78 }}>
+                  <span className="practice-gesture-duration" aria-hidden="true" />
+                  <button type="button" style={{ width: hitWidth }} onClick={() => setSelected(momentKey(item))} aria-pressed={item === active} aria-label={`${gestureLabel(item)}, ${time(item.start_seconds)} to ${time(item.end_seconds ?? item.start_seconds + item.duration_seconds)}. Review evidence.`}>
+                    <time>{time(item.start_seconds)}</time><span><GestureIcon type={type} /></span>
+                  </button>
+                </div>)}
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>
+      <p className="practice-gesture-timeline-note">Choose a moment to watch what happened and see what to practise.</p>
+      <GestureReview event={active} token={token} />
+    </> : <p className="practice-empty">{tracking?.status === "reliable" ? "No gesture issues were identified in this recording." : "For clearer gesture feedback, record with your face, arms and torso in view."}</p>}
   </section>;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { ProcessingSteps } from "@/components/processing-steps";
+import { PracticeProcessing, type ReviewTrack } from "@/components/practice-processing";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,6 +16,7 @@ import { PracticeSpeechMoment, type SpeechMoment } from "@/components/practice-s
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 type PoseEvent = {
+  detection?: { is_issue?: boolean } | null;
   evidence_video_url?: string | null;
   type: string;
   label: string;
@@ -44,6 +46,7 @@ type PracticeReport = {
   id: string;
   original_filename: string;
   status: "queued" | "processing" | "completed" | "failed";
+  processing_tracks?: Partial<Record<"gestures" | "speech", ReviewTrack>> | null;
   progress_percent: number;
   duration_seconds: number | null;
   video_width: number | null;
@@ -209,7 +212,7 @@ export default function UploadPracticePage() {
   const processing = report && ["queued", "processing"].includes(report.status);
   const stage = !report || report.status === "queued" ? "Waiting to start"
     : report.progress_percent < 20 ? "Preparing your recording"
-    : report.progress_percent < 80 ? "Reviewing body language" : report.progress_percent < 90 ? "Reviewing speech delivery" : "Building your feedback";
+    : report.progress_percent < 95 ? "Reviewing body language and speech" : "Saving your report";
   return <main className="practice-page">
     <nav className="practice-nav" aria-label="Workspace navigation">
       <div className="practice-nav-brand"><Link href="/home"><Brand /></Link><span>Upload Practice</span></div>
@@ -227,9 +230,9 @@ export default function UploadPracticePage() {
             <p style={{ marginBottom: 0 }}>MP4 / H.264 · up to 10 minutes · 1080p · 500 MB</p>
           </div>
         </section>
-        <p className="practice-note">The full video and extracted audio are removed after analysis. Your private report keeps the transcript, up to 12 short audio excerpts, and a frame for every detected gesture with a silent replay clip when available. Longer gestures can have longer clips so the movement is not cut off. Deleting the report removes its saved evidence too.</p>
+        <p className="practice-note">The full video and extracted audio are removed after analysis. Your private report keeps speech excerpts with audio and captured gesture moments with replay clips when available. Deleting the report removes its saved evidence too.</p>
       </> : loading || !report ? <section className="practice-panel practice-loading"><h2>Loading your report…</h2><p className="practice-muted">Retrieving your rehearsal feedback.</p></section>
-        : processing ? <section className="practice-panel practice-loading" aria-live="polite"><p className="practice-eyebrow">Analyzing recording</p><h2>{stage}</h2><ProcessingSteps steps={["Waiting to start", "Prepare recording", "Review gestures & retain clips", "Review speech", "Build feedback & save report"]} current={report.status === "queued" ? 0 : report.progress_percent < 20 ? 1 : report.progress_percent < 80 ? 2 : report.progress_percent < 90 ? 3 : 4} /><p className="practice-muted">You can return to your workspace while this finishes.</p><div className="practice-progress" role="progressbar" aria-valuenow={report.progress_percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: report.progress_percent + "%" }} /></div><p className="practice-muted">{report.progress_percent}% complete</p></section>
+        : processing ? <section className="practice-panel practice-loading" aria-live="polite"><p className="practice-eyebrow">Analyzing recording</p><h2>{stage}</h2><ProcessingSteps steps={["Waiting to start", "Prepare recording", "Review body language and speech together", "Save report"]} current={report.status === "queued" ? 0 : report.progress_percent < 20 ? 1 : report.progress_percent < 95 ? 2 : 3} />{report.status === "processing" && report.progress_percent >= 20 && <PracticeProcessing tracks={report.processing_tracks} />}<p className="practice-muted">You can return to your workspace while this finishes.</p><div className="practice-progress" role="progressbar" aria-valuenow={report.progress_percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: report.progress_percent + "%" }} /></div><p className="practice-muted">{report.progress_percent}% complete</p></section>
         : report.status === "failed" ? <section className="practice-panel practice-loading"><p className="practice-eyebrow">Needs attention</p><h2>Analysis could not finish</h2><p className="practice-muted">{report.processing_error_message ?? "Please upload the recording again."}</p><div className="practice-actions" style={{ marginTop: 20 }}><Link className="practice-button" href="/upload-practice">Upload another</Link><button type="button" className="practice-button danger" onClick={() => void deleteReport()}>Delete report</button></div></section>
         : <ReportView key={report.id} accessToken={accessToken} deleteReport={deleteReport} report={report} retrySpeech={retrySpeech} retryingSpeech={retryingSpeech} />}
     </div></div>
@@ -244,7 +247,7 @@ function FindingCard({ finding, accessToken, moment }: { finding: CoachingFindin
     {moment ? <PracticeSpeechMoment moment={moment} accessToken={accessToken} />
       : <p className="practice-recommendation">{finding.recommendation}</p>}
     {body && finding.evidence_image_url && <details><summary>View body-language frame</summary><div style={{ marginTop: 12 }}><EvidenceImage accessToken={accessToken} finding={finding} /></div></details>}
-    <details><summary>Practice this moment</summary><p>{finding.drill}</p></details>
+    {!moment && <details><summary>Practice this moment</summary><p>{finding.drill}</p></details>}
   </article>;
 }
 
@@ -256,7 +259,7 @@ function ReportView({ report, accessToken, deleteReport, retrySpeech, retryingSp
     <header className="practice-heading"><div><p className="practice-eyebrow">Rehearsal report</p><h1>{report.original_filename}</h1><p className="practice-muted">{formatTime(report.duration_seconds)} recording · {formatDate(report.completed_at ?? report.created_at)}</p></div>
       <div className="practice-actions"><Link className="practice-button" href="/upload-practice">New recording</Link><button className="practice-button danger" onClick={() => void deleteReport()} type="button">Delete</button></div>
     </header>
-    <PracticeGestures events={report.pose_events} token={accessToken} tracking={report.pose_tracking} />
+    <PracticeGestures events={report.pose_events} token={accessToken} tracking={report.pose_tracking} duration={report.duration_seconds ?? 0} />
     {missingSpeech > 0 && <div className="practice-panel" role="status" style={{ padding: "16px 20px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}><p className="practice-muted" style={{ margin: 0 }}>{speechBusy ? "Generating the missing speech feedback. Your existing results are kept." : `Feedback is missing for ${missingSpeech} speech moment${missingSpeech === 1 ? "" : "s"}. Retry using your saved excerpts—no new upload needed.`}</p><button className="practice-button" type="button" disabled={speechBusy} onClick={() => void retrySpeech()}>{speechBusy ? "Generating feedback…" : "Retry speech feedback"}</button></div>}
     <div className="practice-report-sections">
       <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">Clarity & fluency</p><h2>Speech moments to practise</h2></div></div>

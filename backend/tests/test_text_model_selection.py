@@ -5,7 +5,7 @@ def test_text_features_use_the_slide_analyzer_luna_model() -> None:
     assert slide_analyzer.ANALYSIS_MODEL == "openai/gpt-6-luna"
     assert transcript_enhancer.TRANSCRIPT_MODEL == slide_analyzer.ANALYSIS_MODEL
     assert agenda_generator.AGENDA_MODEL == slide_analyzer.ANALYSIS_MODEL
-    assert slide_analyzer.VISION_MODEL == "qwen/qwen3-vl-8b-instruct"
+    assert slide_analyzer.VISION_MODEL == "qwen/qwen3-vl-30b-a3b-instruct"
 
 
 def test_transcript_request_sends_luna(monkeypatch) -> None:
@@ -20,3 +20,5 @@ def test_transcript_request_sends_luna(monkeypatch) -> None:
     monkeypatch.setattr(transcript_enhancer, "_parse_json_content", lambda response: {})
     transcript_enhancer._request_json("test prompt")
     assert payloads[0]["model"] == "openai/gpt-6-luna"
+    # Upload speech/gesture coaching uses the same transport without transcript instructions.
+    assert "presentation transcript" not in payloads[0]["messages"][0]["content"]

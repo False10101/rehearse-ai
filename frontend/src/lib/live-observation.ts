@@ -1,12 +1,17 @@
-import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
+import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision";
 
 export type DebugBounds = { x: number; y: number; width: number; height: number };
 
+export type LandmarkPoint = [number, number, number, number];
 export type BrowserObservation = {
   person_detected: boolean;
-  left_gaze_position?: [number, number];
-  right_gaze_position?: [number, number];
-  head_yaw?: number;
+  eyes?: [number, number, number, number];
+  head?: [number, number, number];
+  face_targets?: [number, number][];
+  body?: LandmarkPoint[];
+  hands?: LandmarkPoint[][];
+  body_updated: boolean;
+  hands_updated: boolean;
   debug?: Record<string, DebugBounds>;
 };
 
@@ -45,39 +50,65 @@ function positionInEye(
   const right = Math.max(...corners.map((point) => point.x));
   const top = Math.min(...lids.map((point) => point.y));
   const bottom = Math.max(...lids.map((point) => point.y));
-  if (right - left < 0.001 || bottom - top < 0.001) return null;
+  if (right - left < 0.001 || (bottom - top) / (right - left) < 0.12) return null;
+  // Eyelids follow vertical eye movement, so their changing opening is a poor
+  // denominator for up/down gaze. Anchor to the corner line and eye width.
+  const [first, second] = corners[0].x <= corners[1].x ? corners : [corners[1], corners[0]];
+  const fractionAcross = (iris[0] - left) / (right - left);
+  const cornerLineY = first.y + fractionAcross * (second.y - first.y);
   return [
-    Math.min(1, Math.max(0, (iris[0] - left) / (right - left))),
-    Math.min(1, Math.max(0, (iris[1] - top) / (bottom - top))),
+    Math.min(1, Math.max(0, fractionAcross)),
+    Math.min(1, Math.max(0, 0.5 + 2.5 * (iris[1] - cornerLineY) / (right - left))),
   ];
 }
 
-export function observationFromLandmarks(landmarks: NormalizedLandmark[] | undefined): BrowserObservation {
-  if (!landmarks?.length) return { person_detected: false };
+function pack(points: NormalizedLandmark[]): LandmarkPoint[] {
+  return points.map((p) => [p.x, p.y, p.z, p.visibility ?? 1]);
+}
+
+export function observationFromLandmarks(
+  landmarks: NormalizedLandmark[] | undefined,
+  pose?: Matrix,
+  body?: NormalizedLandmark[],
+  hands?: NormalizedLandmark[][],
+  bodyUpdated = true,
+  handsUpdated = true,
+): BrowserObservation {
+  const observation: BrowserObservation = {
+    person_detected: Boolean(landmarks?.length),
+    body_updated: bodyUpdated,
+    hands_updated: handsUpdated,
+    ...(body ? { body: pack(body) } : {}),
+    ...(hands ? { hands: hands.map(pack) } : {}),
+  };
+  if (!landmarks?.length) return observation;
   const face = bounds(landmarks, landmarks.map((_, index) => index), 0.02);
   const leftEye = bounds(landmarks, LEFT_EYE_REFERENCE_POINTS);
   const rightEye = bounds(landmarks, RIGHT_EYE_REFERENCE_POINTS);
-  const leftIris = irisCentre(landmarks, LEFT_IRIS_POINTS);
-  const rightIris = irisCentre(landmarks, RIGHT_IRIS_POINTS);
   const debug: Record<string, DebugBounds> = {};
   if (face) debug.face = face;
   if (leftEye) debug.left_eye = leftEye;
   if (rightEye) debug.right_eye = rightEye;
-  const nose = landmarks[1];
-  const observation: BrowserObservation = {
-    person_detected: true,
-    ...(Object.keys(debug).length ? { debug } : {}),
-  };
-  if (leftEye && rightEye && nose) {
-    const leftCentreX = leftEye.x + leftEye.width / 2;
-    const rightCentreX = rightEye.x + rightEye.width / 2;
-    const eyeMidpointX = (leftCentreX + rightCentreX) / 2;
-    const eyeSpan = Math.max(Math.abs(rightCentreX - leftCentreX), 0.001);
-    observation.head_yaw = (nose.x - eyeMidpointX) / eyeSpan;
-    const leftPosition = leftIris ? positionInEye(landmarks, leftIris, LEFT_EYE_GEOMETRY) : null;
-    const rightPosition = rightIris ? positionInEye(landmarks, rightIris, RIGHT_EYE_GEOMETRY) : null;
-    if (leftPosition) observation.left_gaze_position = leftPosition;
-    if (rightPosition) observation.right_gaze_position = rightPosition;
+  observation.debug = debug;
+  // Canonical-to-camera matrix, column-major. Positive camera x is the
+  // presenter's left; positive y is up. Roll is around the face-forward axis.
+  if (pose?.rows === 4 && pose.columns === 4 && pose.data.length === 16 && pose.data.every(Number.isFinite)) {
+    const [x, y, z] = [pose.data[8], pose.data[9], pose.data[10]];
+    if (Math.hypot(x, y, z) > 0.001) {
+      observation.head = [
+        Math.atan2(x, z) * 180 / Math.PI,
+        Math.atan2(y, Math.hypot(x, z)) * 180 / Math.PI,
+        Math.atan2(pose.data[1], pose.data[0]) * 180 / Math.PI,
+      ];
+    }
+  }
+  const leftIris = irisCentre(landmarks, LEFT_IRIS_POINTS);
+  const rightIris = irisCentre(landmarks, RIGHT_IRIS_POINTS);
+  const left = leftIris ? positionInEye(landmarks, leftIris, LEFT_EYE_GEOMETRY) : null;
+  const right = rightIris ? positionInEye(landmarks, rightIris, RIGHT_EYE_GEOMETRY) : null;
+  if (left && right && [...left, ...right].every(Number.isFinite)) observation.eyes = [...left, ...right];
+  if ([13, 33, 263, 10].every((i) => landmarks[i])) {
+    observation.face_targets = [13, 33, 263, 10].map((i) => [landmarks[i].x, landmarks[i].y]);
   }
   return observation;
 }

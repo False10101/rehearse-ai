@@ -147,6 +147,28 @@ def test_hand_at_own_shoulder_is_not_crossed_arm():
     assert classify_pose(keypoints(**{"9": (100, 110, 1)}))["arms_crossed"] == 0
 
 
+def test_folded_arms_with_centre_biased_wrists_survive_scale_and_mirroring():
+    p = keypoints(**{"7": (90, 180, 1), "8": (210, 180, 1),
+                     "9": (145, 185, 1), "10": (155, 185, 1)})
+    for scale, flip, translate in ((1, 1, 0), (2, 1, 50), (0.7, -1, 350)):
+        transformed = [(x * scale * flip + translate, y * scale, c) for x, y, c in p]
+        evidence = {}
+        assert classify_pose(transformed, evidence)["arms_crossed"] >= 0.76
+        assert evidence["arms_crossed"]["posture"] == "folded across your torso"
+
+
+def test_presenter_identity_does_not_change_with_confidence_ranking():
+    from app.services.upload_practice import select_presenter
+
+    original = keypoints()
+    distant = [(x + 500, y, c) for x, y, c in original]
+    current = [(x + 2, y, c * 0.9) for x, y, c in original]
+    chosen, switched = select_presenter([distant, current], original)
+    assert chosen is current and not switched
+    _, switched = select_presenter([distant], original)
+    assert switched
+
+
 def test_one_arm_crossing_does_not_require_the_other_wrist():
     assert (
         classify_pose(

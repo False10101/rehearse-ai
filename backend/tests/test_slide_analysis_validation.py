@@ -142,18 +142,16 @@ def test_zero_priorities_are_valid_without_fabricating_padding() -> None:
     assert parsed["deck_top_priorities"] == []
 
 
-@pytest.mark.parametrize(
-    "suggestions,error",
-    [
-        (["[LOW] Refine the wording."] * 4, "duplicate|repeat|distinct"),
-    ],
-)
-def test_every_slide_requires_concise_non_redundant_coaching(suggestions, error) -> None:
+def test_repeated_findings_are_cleaned_without_regenerating_the_deck() -> None:
     result = valid_analysis()
-    result["per_slide"][0]["improvement_suggestions"] = suggestions
-
-    with pytest.raises(ValueError, match=error):
-        slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+    result["per_slide"][0]["improvement_suggestions"] = [
+        "[LOW] Refine the wording.", "[LOW] Refine the wording.",
+        "[LOW]   REFINE the wording.", "[MEDIUM] Fix the low contrast.", "[LOW] ",
+    ]
+    slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+    assert result["per_slide"][0]["improvement_suggestions"] == [
+        "[LOW] Refine the wording.", "[MEDIUM] Fix the low contrast.",
+    ]
 
 
 def test_more_than_three_deck_priorities_still_rejected() -> None:
@@ -182,8 +180,6 @@ def test_per_slide_suggestions_have_no_fixed_maximum() -> None:
     "field,value",
     [
         ("improvement_suggestions", ["N/A"]),
-        ("improvement_suggestions", ["[LOW] Improve the title.", "[HIGH] Improve the title."]),
-        ("table_tips", [""]),
     ],
 )
 def test_new_findings_reject_invented_references_and_unusable_lists(field, value) -> None:
@@ -191,6 +187,18 @@ def test_new_findings_reject_invented_references_and_unusable_lists(field, value
     result["per_slide"][0][field] = value
     with pytest.raises(ValueError):
         slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+
+
+@pytest.mark.parametrize("field,value,expected", [
+    ("improvement_suggestions", ["[LOW] Improve the title.", "[HIGH] Improve the title."],
+     ["[LOW] Improve the title."]),
+    ("table_tips", [""], []),
+])
+def test_mechanical_list_cleanup_does_not_require_a_new_analysis(field, value, expected):
+    result = valid_analysis()
+    result["per_slide"][0][field] = value
+    slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+    assert result["per_slide"][0][field] == expected
 
 
 def test_reference_not_found_on_its_slide_is_filtered() -> None:
@@ -482,7 +490,9 @@ def test_retry_and_log_identify_field_without_exposing_response(monkeypatch, cap
     monkeypatch.setattr(slide_analyzer.requests, "post", post)
     slide_analyzer.analyze([{"num": 1}])
     assert requests[0]["response_format"]["type"] == "json_schema"
-    assert "provider" not in requests[0]
+    assert requests[0]["provider"] == {"order": ["openai/fast"], "allow_fallbacks": True}
+    assert requests[0]["service_tier"] == "priority"
+    assert "require_parameters" not in requests[0]["provider"]
     assert "temperature" not in requests[0]
     assert requests[0]["model"] == "openai/gpt-6-luna"
     retry_prompt = requests[1]["messages"][-1]["content"]

@@ -38,7 +38,7 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
   return <section className="practice-panel" aria-labelledby="pace-heading">
     <div className="practice-panel-heading">
       <div><p className="practice-eyebrow">Speech delivery</p><h2 id="pace-heading">Where your pace changes</h2>
-        <p className="practice-muted">Select a highlighted interval to see what to practise. Hover or tap the chart to inspect a measurement.</p></div>
+        <p className="practice-muted">All faster and slower passages are highlighted. Choose a passage below to hear it and see specific feedback.</p></div>
       <span className="practice-count">{events.length} intervals to review</span>
     </div>
     {samples.length ? <>
@@ -51,7 +51,12 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
         <svg className="practice-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Speaking pace estimates. Orange and blue mark faster and slower passages to review, not confirmed delivery mistakes."
           onMouseLeave={() => setHoverIndex(null)}>
           <rect x={left} y={y(180)} width={w-left-right} height={y(100)-y(180)} fill="#f4f2fb" />
-          {selected && <rect x={x(selected.start_seconds)} y={top} width={Math.max(3, x(selected.end_seconds)-x(selected.start_seconds))} height={h-top-bottom} fill={color(selected.type)} opacity=".12" />}
+          {events.map((event, index) => <g key={`${event.type}-${event.start_seconds}`}>
+            <rect x={x(event.start_seconds)} y={top} width={Math.max(1, x(event.end_seconds)-x(event.start_seconds))} height={h-top-bottom}
+              fill={color(event.type)} opacity={index === selectedIndex ? ".23" : ".10"}
+              onClick={() => setSelectedIndex(index)} style={{ cursor: "pointer" }} />
+            <rect x={x(event.start_seconds)} y={top} width={Math.max(1, x(event.end_seconds)-x(event.start_seconds))} height="4" fill={color(event.type)} />
+          </g>)}
           {[0, 100, 180, maximum].map(value => <g key={value}>
             <line x1={left} x2={w-right} y1={y(value)} y2={y(value)} stroke="#dedce7" strokeDasharray={value === 100 || value === 180 ? "5 5" : undefined} />
             <text x={left-10} y={y(value)+4} textAnchor="end" fill="#777180" fontSize="12">{value}</text>
@@ -65,8 +70,12 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
           {samples.map((sample, i) => <g key={sample.timestamp_seconds}>
             <circle cx={x(sample.timestamp_seconds)} cy={y(sample.words_per_minute)} r={hoverIndex === i ? 5 : 2.5} fill={color(sample.type)} />
             <rect x={x(sample.timestamp_seconds)-Math.max(4,(w-left-right)*2.5/end)} y={top} width={Math.max(8,(w-left-right)*5/end)} height={h-top-bottom}
-              fill="transparent" onMouseEnter={() => setHoverIndex(i)} onClick={() => setHoverIndex(i)}>
-              <title>{time(sample.start_seconds)}–{time(sample.end_seconds)}: {sample.words_per_minute} WPM</title>
+              fill="transparent" onMouseEnter={() => setHoverIndex(i)} onClick={() => {
+                setHoverIndex(i);
+                const index = events.findIndex(event => sample.timestamp_seconds >= event.start_seconds && sample.timestamp_seconds <= event.end_seconds);
+                if (index >= 0) setSelectedIndex(index);
+              }}>
+              <title>{`${time(sample.start_seconds)}–${time(sample.end_seconds)}: ${sample.words_per_minute} WPM`}</title>
             </rect>
           </g>)}
           {inspected && <line x1={x(inspected.timestamp_seconds)} x2={x(inspected.timestamp_seconds)} y1={top} y2={h-bottom} stroke="#777180" strokeDasharray="3 4" pointerEvents="none" />}
@@ -90,7 +99,7 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
       {selected && <div className="practice-selected" aria-live="polite">
         <div className="practice-selected-title"><h3>{selected.type === "fast" ? "Review this faster passage" : "Review this slower passage or pause"}</h3><span>{Math.round(selected.words_per_minute)} WPM*</span></div>
         {moment ? <PracticeSpeechMoment key={moment.id} moment={moment} accessToken={accessToken} />
-          : <p>No coaching excerpt was retained for this interval. Each new report keeps up to 12 selected speech moments.</p>}
+          : <p>The excerpt for this interval is missing from this saved report. Analyze the recording again to retain it.</p>}
         <small>*Average of overlapping pace measurements in the selected interval. A slow interval alone does not prove a mistake.</small>
       </div>}
     </div> : samples.length ? <p className="practice-empty">No measured interval crossed the fast or slow review thresholds.</p> : null}

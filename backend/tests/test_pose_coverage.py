@@ -134,13 +134,12 @@ def test_pose_pipeline_records_visibility_even_without_gesture_events(monkeypatc
         def get(self, prop):
             return 5 if prop == upload_practice.cv2.CAP_PROP_FPS else 50
 
-        def read(self):
+        def grab(self):
             self.remaining -= 1
-            return (
-                (True, np.zeros((480, 640, 3), dtype=np.uint8))
-                if self.remaining >= 0
-                else (False, None)
-            )
+            return self.remaining >= 0
+
+        def retrieve(self):
+            return True, np.zeros((480, 640, 3), dtype=np.uint8)
 
         def release(self):
             pass
@@ -156,12 +155,13 @@ def test_pose_pipeline_records_visibility_even_without_gesture_events(monkeypatc
         ),
     )
     # Isolate visibility telemetry from gesture scoring; no events in every scenario.
-    monkeypatch.setattr(upload_practice, "classify_pose", lambda points: {})
+    monkeypatch.setattr(upload_practice, "classify_pose", lambda points, evidence=None: {})
     monkeypatch.setattr(
         upload_practice,
         "MovementTracker",
         lambda: SimpleNamespace(
             observe=lambda *args: {},
+            evidence={},
         ),
     )
     for points, expected in (([], "insufficient"), (body(), "reliable")):
@@ -172,7 +172,9 @@ def test_pose_pipeline_records_visibility_even_without_gesture_events(monkeypatc
             sys.modules,
             "ultralytics",
             SimpleNamespace(
-                YOLO=lambda name: SimpleNamespace(predict=lambda *args, **kwargs: [result]),
+                YOLO=lambda name: SimpleNamespace(
+                    predict=lambda *args, **kwargs: [result], add_callback=lambda *args: None,
+                ),
             ),
         )
         tracking = {}

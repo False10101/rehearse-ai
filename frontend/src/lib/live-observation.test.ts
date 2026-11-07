@@ -1,93 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
-
+import type { Matrix } from "@mediapipe/tasks-vision";
 import { observationFromLandmarks } from "./live-observation.ts";
 
-const LEFT_EYE = [33, 133, 159, 145, 160, 144, 158, 153, 157, 154, 173, 246];
-const RIGHT_EYE = [263, 362, 386, 374, 387, 373, 385, 380, 384, 381, 398, 466];
-const LEFT_IRIS = [468, 469, 470, 471, 472];
-const RIGHT_IRIS = [473, 474, 475, 476, 477];
-
-function centredFace(): NormalizedLandmark[] {
-  const point = (x: number, y: number): NormalizedLandmark => ({ x, y, z: 0, visibility: 1 });
-  const landmarks = Array.from({ length: 478 }, () => point(0.5, 0.5));
-  landmarks[1] = point(0.5, 0.46);
-  LEFT_EYE.forEach((index, point) => {
-    landmarks[index] = { x: point % 2 ? 0.37 : 0.33, y: point % 3 ? 0.48 : 0.52, z: 0, visibility: 1 };
-  });
-  RIGHT_EYE.forEach((index, point) => {
-    landmarks[index] = { x: point % 2 ? 0.67 : 0.63, y: point % 3 ? 0.48 : 0.52, z: 0, visibility: 1 };
-  });
-  LEFT_IRIS.forEach((index) => { landmarks[index] = point(0.35, 0.5); });
-  RIGHT_IRIS.forEach((index) => { landmarks[index] = point(0.65, 0.5); });
-  return landmarks;
+function face() {
+  const p = Array.from({ length: 478 }, () => ({ x: .5, y: .5, z: 0, visibility: 1 }));
+  for (const [a, b, x] of [[33, 133, .35], [362, 263, .65]]) { p[a].x = x - .02; p[b].x = x + .02; }
+  for (const i of [159, 386]) p[i].y = .49;
+  for (const i of [145, 374]) p[i].y = .51;
+  for (const i of [468, 469, 470, 471, 472]) p[i].x = .35;
+  for (const i of [473, 474, 475, 476, 477]) p[i].x = .65;
+  return p;
 }
-
-test("returns no-person observation when face landmarks are absent", () => {
-  assert.deepEqual(observationFromLandmarks(undefined), { person_detected: false });
+function matrix(yaw=0, pitch=0, roll=0): Matrix {
+  const y=yaw*Math.PI/180, p=pitch*Math.PI/180, r=roll*Math.PI/180;
+  return { rows:4, columns:4, data:[Math.cos(y)*Math.cos(r),Math.sin(r),-Math.sin(y),0,-Math.sin(r),Math.cos(p)*Math.cos(r),-Math.sin(p),0,Math.sin(y)*Math.cos(p),Math.sin(p),Math.cos(y)*Math.cos(p),0,0,0,-40,1] };
+}
+test("missing face never fabricates eye/head measurements", () => {
+  const r=observationFromLandmarks(undefined); assert.equal(r.person_detected,false); assert.equal(r.eyes,undefined); assert.equal(r.head,undefined);
 });
-
-test("derives centred gaze, head yaw, and debug bounds", () => {
-  const observation = observationFromLandmarks(centredFace());
-
-  assert.equal(observation.person_detected, true);
-  assert.ok(observation.head_yaw !== undefined);
-  assert.ok(Math.abs(observation.head_yaw) < 0.01);
-  assert.ok(observation.left_gaze_position);
-  assert.ok(observation.right_gaze_position);
-  assert.ok(Math.abs(observation.left_gaze_position[0] - 0.5) < 0.01);
-  assert.ok(Math.abs(observation.right_gaze_position[0] - 0.5) < 0.01);
-  assert.ok(observation.debug?.face);
-  assert.ok(observation.debug?.left_eye);
-  assert.ok(observation.debug?.right_eye);
+test("neutral head and iris are independent", () => {
+  const r=observationFromLandmarks(face(),matrix()); assert.deepEqual(r.head,[0,0,0]);
+  for(const v of r.eyes!) assert.ok(Math.abs(v-.5)<1e-6);
+  assert.ok(r.debug?.face && r.debug.left_eye && r.debug.right_eye);
 });
-
-test("keeps face tracking available when iris landmarks are unavailable", () => {
-  const landmarks = centredFace().slice(0, 468);
-  const observation = observationFromLandmarks(landmarks);
-
-  assert.equal(observation.person_detected, true);
-  assert.equal(observation.left_gaze_position, undefined);
-  assert.equal(observation.right_gaze_position, undefined);
-  assert.ok(observation.head_yaw !== undefined);
+for(const [side,x,y] of [["left",.008,0],["right",-.008,0],["up",0,-.004],["down",0,.004]] as const) {
+  test(`eye-only ${side} with stationary head`,()=>{
+    const p=face(); for(const i of [468,469,470,471,472,473,474,475,476,477]){p[i].x+=x;p[i].y+=y;}
+    for(const i of [159,145,386,374])p[i].y+=y;
+    const r=observationFromLandmarks(p,matrix());assert.deepEqual(r.head,[0,0,0]);
+    assert.ok(Math.abs(r.eyes![x?0:1]-.5)>.1);assert.equal(Math.sign(r.eyes![x?0:1]-.5),Math.sign(x||y));
+  });
+}
+for(const [side,yaw,pitch,roll] of [["left",25,0,0],["right",-25,0,0],["up",0,25,0],["down",0,-25,0],["lean-left",0,0,-25],["lean-right",0,0,25]] as const) {
+  test(`head-only ${side} uses pose, not iris displacement`,()=>{
+    const r=observationFromLandmarks(face(),matrix(yaw,pitch,roll));
+    for(const [i,v] of [yaw,pitch,roll].entries()) assert.ok(Math.abs(r.head![i]-v)<1e-5);
+    for(const v of r.eyes!) assert.ok(Math.abs(v-.5)<1e-6);
+  });
+}
+test("blink rejects iris measurements without losing head pose",()=>{
+  const p=face();for(const i of [159,145,386,374])p[i].y=.5;
+  const r=observationFromLandmarks(p,matrix());assert.equal(r.eyes,undefined);assert.ok(r.head);
 });
-
-test("uses anatomical eye geometry instead of padded debug bounds", () => {
-  const landmarks = centredFace();
-  LEFT_IRIS.forEach((index) => { landmarks[index] = { x: 0.365, y: 0.5, z: 0, visibility: 1 }; });
-  RIGHT_IRIS.forEach((index) => { landmarks[index] = { x: 0.665, y: 0.5, z: 0, visibility: 1 }; });
-
-  const observation = observationFromLandmarks(landmarks);
-
-  assert.ok(observation.left_gaze_position);
-  assert.ok(observation.right_gaze_position);
-  assert.ok(observation.left_gaze_position[0] > 0.8);
-  assert.ok(observation.right_gaze_position[0] > 0.8);
-});
-
-test("keeps both eye measurements separate when they disagree", () => {
-  const landmarks = centredFace();
-  LEFT_IRIS.forEach((index) => { landmarks[index] = { x: 0.335, y: 0.5, z: 0, visibility: 1 }; });
-  RIGHT_IRIS.forEach((index) => { landmarks[index] = { x: 0.665, y: 0.5, z: 0, visibility: 1 }; });
-
-  const observation = observationFromLandmarks(landmarks);
-
-  assert.ok(observation.left_gaze_position);
-  assert.ok(observation.right_gaze_position);
-  assert.ok(observation.left_gaze_position[0] < 0.2);
-  assert.ok(observation.right_gaze_position[0] > 0.8);
-});
-
-test("derives horizontal head yaw independently from iris gaze", () => {
-  const landmarks = centredFace();
-  landmarks[1] = { x: 0.56, y: 0.46, z: 0, visibility: 1 };
-
-  const observation = observationFromLandmarks(landmarks);
-
-  assert.ok(observation.head_yaw !== undefined);
-  assert.ok(observation.head_yaw > 0.18);
-  assert.ok(observation.left_gaze_position);
-  assert.ok(observation.right_gaze_position);
-  assert.ok(Math.abs(observation.left_gaze_position[0] - 0.5) < 0.01);
+test("body/hand packets carry explicit sampling markers",()=>{
+  const r=observationFromLandmarks(face(),matrix(),face().slice(0,33),[face().slice(0,21)]);
+  assert.equal(r.body?.length,33);assert.equal(r.hands?.[0].length,21);
+  const skipped=observationFromLandmarks(face(),matrix(),undefined,undefined,false,false);
+  assert.equal(skipped.body_updated,false);assert.equal(skipped.hands_updated,false);
 });
