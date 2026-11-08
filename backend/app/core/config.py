@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     upload_practice_sample_fps: float = 5.0
     # Zero chooses up to four threads, leaving one logical CPU for other work.
     upload_practice_cpu_threads: int = 0
-    slide_vision_workers: int = 4
+    slide_vision_workers: int = 8
     slide_analysis_workers: int = 5
     slide_analysis_batch_size: int = 3
     transcript_generation_workers: int = 4

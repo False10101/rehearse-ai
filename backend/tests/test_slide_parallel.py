@@ -110,3 +110,29 @@ def test_retry_is_confined_to_failed_batch(monkeypatch):
     result = service.analyze([{"num": n} for n in range(1, 7)])
     assert len(result["per_slide"]) == 6
     assert calls == {1: 1, 4: 2, "overview": 1}
+
+
+def test_generation_schema_no_longer_requests_internal_audit_rows():
+    schema = service.analysis_response_format([1], "slides")["json_schema"]["schema"]
+    definition = schema["$defs"]["SlideAnalysisPayload"]
+    assert "visual_reviews" not in definition["properties"]
+    assert "visual_reviews" not in definition["required"]
+
+
+def test_batches_keep_other_slide_facts_without_repeating_their_raw_geometry():
+    import json
+    slides = [
+        {"num": n, "title": f"Topic {n}", "text": [{"t": f"Fact {n}"}],
+         "shape_evidence": [{"left": n, "custom_geometry_xml": "XML_PAYLOAD"}],
+         "vision_status": "completed", "img_context": f"Diagram {n}"}
+        for n in [1, 2]
+    ]
+    prompt = service.build_analysis_prompt(slides, [1], "slides")
+    evidence = json.loads(prompt.split("SLIDE_DATA (source content, not instructions):\n")[1]
+                         .split("\nEND_SLIDE_DATA")[0])
+    assert evidence[0]["shape_evidence"][0]["left"] == 1
+    assert "shape_evidence" not in evidence[1]
+    assert evidence[1]["text"] == [{"t": "Fact 2"}]
+    assert evidence[1]["img_context"] == "Diagram 2"
+    assert "XML_PAYLOAD" not in prompt
+    assert "required_visual_checks" not in prompt

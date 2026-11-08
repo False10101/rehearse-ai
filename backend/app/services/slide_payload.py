@@ -1,4 +1,4 @@
-"""Lossless compaction of repeated evidence in the final analysis request."""
+"""Provider payload compaction; original extraction remains intact in storage."""
 
 from copy import deepcopy
 
@@ -22,4 +22,13 @@ def compact_slide_evidence(slide: dict) -> dict:
             corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
             if region.get("slide_corners") == corners:
                 region.pop("slide_corners")
+    # Raw DrawingML is retained in stored extraction for diagnostics, but is not
+    # useful language-model context. Resolved bounds, corners and styles remain.
+    for shape in result.get("shape_evidence", []):
+        shape.pop("custom_geometry_xml", None)
+        line = shape.get("line")
+        if isinstance(line, dict):
+            line.pop("explicit_style_xml", None)
+    result.pop("vision_reviews", None)
+    result.pop("required_visual_checks", None)
     return result

@@ -54,7 +54,8 @@ def test_qwen_vision_does_not_inherit_luna_routing(monkeypatch, tmp_path):
         raise RequestCaptured()
 
     image = tmp_path / "slide.png"
-    image.write_bytes(b"image evidence")
+    from PIL import Image
+    Image.new("RGB", (800, 450)).save(image)
     monkeypatch.setattr(slide_analyzer, "post_provider_request", capture)
     monkeypatch.setattr(slide_analyzer, "openrouter_headers", lambda: {})
     with pytest.raises(RequestCaptured):

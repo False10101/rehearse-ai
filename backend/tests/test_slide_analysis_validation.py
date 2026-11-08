@@ -98,7 +98,7 @@ def test_validation_rejects_missing_slide_result() -> None:
 def test_analyze_retries_invalid_payload_then_returns_valid_payload(monkeypatch) -> None:
     invalid = valid_analysis()
     invalid.pop("complex_terms")
-    responses = iter([FakeResponse(invalid), FakeResponse(invalid), FakeResponse(valid_analysis())])
+    responses = iter([FakeResponse(invalid), FakeResponse(valid_analysis())])
     attempts = 0
 
     def fake_post(*_args, **_kwargs):
@@ -111,11 +111,11 @@ def test_analyze_retries_invalid_payload_then_returns_valid_payload(monkeypatch)
 
     result = slide_analyzer.analyze([{"num": 1}])
 
-    assert attempts == 3
+    assert attempts == 2
     assert result["complex_terms"] == []
 
 
-def test_analyze_fails_after_three_invalid_payloads(monkeypatch) -> None:
+def test_analyze_fails_after_two_invalid_payloads(monkeypatch) -> None:
     invalid = valid_analysis()
     invalid.pop("complex_terms")
     attempts = 0
@@ -131,7 +131,7 @@ def test_analyze_fails_after_three_invalid_payloads(monkeypatch) -> None:
     with pytest.raises(slide_analyzer.SlideAnalysisGenerationError):
         slide_analyzer.analyze([{"num": 1}])
 
-    assert attempts == 3
+    assert attempts == 2
 
 
 def test_zero_priorities_are_valid_without_fabricating_padding() -> None:
@@ -176,17 +176,12 @@ def test_per_slide_suggestions_have_no_fixed_maximum() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("improvement_suggestions", ["N/A"]),
-    ],
-)
-def test_new_findings_reject_invented_references_and_unusable_lists(field, value) -> None:
+def test_missing_priority_prefix_is_normalized_without_regeneration():
     result = valid_analysis()
-    result["per_slide"][0][field] = value
-    with pytest.raises(ValueError):
-        slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+    result["per_slide"][0]["improvement_suggestions"] = ["Increase the body text size."]
+    slide_analyzer.validate_generated_findings(result, [{"num": 1}])
+    assert result["per_slide"][0]["improvement_suggestions"] == [
+        "[MEDIUM] Increase the body text size."]
 
 
 @pytest.mark.parametrize("field,value,expected", [
@@ -297,47 +292,34 @@ def test_vision_context_discards_text_claims_missing_from_extracted_text() -> No
     assert "FANTUN" not in sanitized
 
 
-def test_vision_prompt_requires_density_without_guessing_unextracted_text(
-    monkeypatch, tmp_path
-) -> None:
+def test_vision_prompt_is_visual_only_and_uses_one_resized_image(monkeypatch, tmp_path):
+    import base64
+    from io import BytesIO
+    from PIL import Image
     captured = {}
-
-    class CaptionResponse:
-        def raise_for_status(self):
-            return None
-
+    class Response:
+        def raise_for_status(self): pass
         def json(self):
-            return {"choices": [{"message": {"content": json.dumps({
-                "description": "A dense bullet region is visible.", "checks": []})}}]}
-
-    def post(*_args, **kwargs):
+            return {"choices": [{"message": {"content": "Dense text beside a diagram."}}]}
+    def post(*args, **kwargs):
         captured.update(kwargs["json"])
-        return CaptionResponse()
-
+        assert kwargs["max_attempts"] == 1
+        return Response()
     image = tmp_path / "slide.png"
-    image.write_bytes(b"image")
+    Image.new("RGB", (4000, 2250), "white").save(image)
     monkeypatch.setattr(slide_analyzer, "openrouter_headers", lambda: {})
-    monkeypatch.setattr(slide_analyzer.requests, "post", post)
-
-    slide_analyzer.caption_slide_image(3, image, "WHY WE DIFFERENT?")
-    prompt = captured["messages"][0]["content"][1]["text"]
-    assert "every visible text region" in prompt
-    assert "approximate line count" in prompt
-    assert "Never omit a text region" in prompt
-    assert "WHY WE DIFFERENT?" in prompt
-    for category in (
-        "Contrast:",
-        "Typography:",
-        "Alignment and spacing:",
-        "Overlap and clipping:",
-        "Hierarchy and reading order:",
-        "Visual consistency:",
-    ):
-        assert category in prompt
-    assert "bright yellow text on white" in prompt
-    assert "actual local background" in prompt
-    assert "4-7" not in prompt
-    assert captured["max_tokens"] >= 900
+    monkeypatch.setattr(slide_analyzer, "post_provider_request", post)
+    assert slide_analyzer.caption_slide_image(3, image, "Source heading")[1]
+    content = captured["messages"][0]["content"]
+    assert len(content) == 2
+    assert "SOURCE_TEXT" in content[1]["text"]
+    assert "DESIGN_EVIDENCE" not in content[1]["text"]
+    assert "VISUAL_CHECKS" not in content[1]["text"]
+    raw = base64.b64decode(content[0]["image_url"]["url"].split(",", 1)[1])
+    with Image.open(BytesIO(raw)) as uploaded:
+        assert uploaded.size == (1600, 900)
+    with Image.open(image) as original:
+        assert original.size == (4000, 2250)
 
 
 def test_dense_region_is_evidence_not_a_forced_overload_verdict() -> None:

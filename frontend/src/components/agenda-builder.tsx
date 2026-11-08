@@ -30,10 +30,16 @@ function AgendaPreview({ template, palette, label }: { template: Template; palet
   );
 }
 
-export function AgendaLaunch({ presentationId, accessToken }: { presentationId: string; accessToken: string | null }) {
+export function AgendaLaunch({ presentationId, accessToken, action = "create", initialLayout = "paired-sections", initialTheme = "violet" }: {
+  presentationId: string; accessToken: string | null;
+  action?: "create" | "regenerate" | "design"; initialLayout?: string; initialTheme?: string;
+}) {
+  const designOnly = action === "design";
+  const updating = action !== "create";
+  const label = designOnly ? "Change design" : updating ? "Regenerate content" : "Create agenda";
   const [open, setOpen] = useState(false);
-  const [layout, setLayout] = useState("paired-sections");
-  const [theme, setTheme] = useState("violet");
+  const [layout, setLayout] = useState(initialLayout);
+  const [theme, setTheme] = useState(initialTheme);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -43,6 +49,11 @@ export function AgendaLaunch({ presentationId, accessToken }: { presentationId: 
   const dialogRef = useRef<HTMLDivElement>(null);
   const launchRef = useRef<HTMLButtonElement>(null);
   const requestInFlight = useRef(false);
+
+  useEffect(() => {
+    setLayout(initialLayout);
+    setTheme(initialTheme);
+  }, [initialLayout, initialTheme]);
 
   useEffect(() => {
     if (!open || !accessToken || catalog) return;
@@ -88,7 +99,7 @@ export function AgendaLaunch({ presentationId, accessToken }: { presentationId: 
     try {
       const response = await fetch(`${apiBaseUrl}/api/v1/presentations/${presentationId}/agenda`, {
         method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ layout, theme }),
+        body: JSON.stringify({ layout, theme, action }),
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok || typeof payload !== "object" || payload === null || !("inserted_slide_number" in payload) || typeof payload.inserted_slide_number !== "number") {
@@ -107,7 +118,7 @@ export function AgendaLaunch({ presentationId, accessToken }: { presentationId: 
   const selected = catalog?.templates.find((item) => item.id === layout);
   const palette = catalog?.themes[theme];
   return <>
-    <button ref={launchRef} className={`w-full rounded-lg border border-[#f2d2ad] bg-[#fffaf2] px-3 py-2 text-[0.72rem] font-extrabold text-[#a86410] ${focus}`} onClick={() => { setError(null); setOpen(true); }} type="button">✦ Create agenda</button>
+    <button ref={launchRef} className={`w-full rounded-lg border px-3 py-2 text-[0.72rem] font-extrabold ${updating ? "border-[#ddd7f7] bg-white text-[#6753ea] hover:bg-[#f7f5ff]" : "border-[#f2d2ad] bg-[#fffaf2] text-[#a86410]"} ${focus}`} onClick={() => { setError(null); setOpen(true); }} type="button">✦ {label}</button>
     {open ? <div className="fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-3 backdrop-blur-sm sm:p-6">
       <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="agenda-title" aria-describedby="agenda-description" className="flex max-h-[92dvh] w-full max-w-[72rem] flex-col overflow-hidden rounded-2xl bg-white text-[#282336] shadow-2xl outline-none" onKeyDown={(event) => {
         if (event.key === "Escape" && !creating) { event.stopPropagation(); setOpen(false); }
@@ -119,7 +130,7 @@ export function AgendaLaunch({ presentationId, accessToken }: { presentationId: 
         else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { event.preventDefault(); first.focus(); }
       }}>
         <header className="flex flex-none items-start justify-between gap-5 border-b border-[#ebe7f0] px-6 py-5">
-          <div><h2 className="m-0 text-xl font-semibold tracking-tight" id="agenda-title">An agenda that fits your presentation</h2><p className="mb-0 mt-2 text-sm text-[#83788e]" id="agenda-description">Choose a layout and palette. We’ll write the sections from your deck and add the slide in the right place.</p></div>
+          <div><h2 className="m-0 text-xl font-semibold tracking-tight" id="agenda-title">{designOnly ? "Change agenda design" : updating ? "Regenerate your agenda" : "An agenda that fits your presentation"}</h2><p className="mb-0 mt-2 text-sm text-[#83788e]" id="agenda-description">{designOnly ? "Choose a layout and palette. Your current agenda text and slide position will stay the same." : updating ? "We’ll rewrite the sections from your deck and replace this agenda in the same position." : "Choose a layout and palette. We’ll write the sections from your deck and add the slide in the right place."}</p></div>
           <button className={`rounded-lg px-2 text-2xl text-[#887c96] disabled:opacity-30 ${focus}`} aria-label="Close agenda builder" disabled={creating} onClick={() => setOpen(false)} type="button">×</button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -145,13 +156,13 @@ export function AgendaLaunch({ presentationId, accessToken }: { presentationId: 
                   </button>)}
                 </div>
               </fieldset>
-              <p className="mb-0 mt-5 text-xs leading-5 text-[#95859f]">The preview shows the layout and colors. Your agenda will use titles and short descriptions from your own presentation.</p>
+              <p className="mb-0 mt-5 text-xs leading-5 text-[#95859f]">The preview shows the layout and colors. {designOnly ? "Your existing section titles and descriptions will be preserved." : "Your agenda will use titles and short descriptions from your own presentation."}</p>
             </div>
           </div>}
         </div>
         <footer className="flex flex-none flex-wrap items-center justify-between gap-3 border-t border-[#ebe7f0] bg-white px-6 py-4">
-          <div className="min-w-0 flex-1 text-xs leading-5" aria-live="polite">{error ? <p className="m-0 text-[#b7445d]" role="alert">{error}</p> : <p className="m-0 text-[#93829f]">{creating ? "Writing your agenda and updating slide previews. This may take a moment." : "Added directly to your deck. All slide content stays editable in PowerPoint."}</p>}</div>
-          <button className={`inline-flex items-center gap-2 rounded-xl bg-[#7960d7] px-5 py-3 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60 ${focus}`} disabled={creating || !accessToken || !catalog} onClick={() => void create()} type="button">{creating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}{creating ? "Creating agenda…" : error ? "Try again" : "Add agenda to deck"}</button>
+          <div className="min-w-0 flex-1 text-xs leading-5" aria-live="polite">{error ? <p className="m-0 text-[#b7445d]" role="alert">{error}</p> : <p className="m-0 text-[#93829f]">{creating ? (designOnly ? "Applying your design and updating previews…" : "Writing your agenda and updating previews…") : updating ? "Replaces the current generated agenda. Other slides stay unchanged." : "Added directly to your deck. All slide content stays editable in PowerPoint."}</p>}</div>
+          <button className={`inline-flex items-center gap-2 rounded-xl bg-[#7960d7] px-5 py-3 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60 ${focus}`} disabled={creating || !accessToken || !catalog} onClick={() => void create()} type="button">{creating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}{creating ? (designOnly ? "Applying design…" : updating ? "Regenerating…" : "Creating agenda…") : error ? "Try again" : designOnly ? "Apply design" : updating ? "Regenerate agenda" : "Add agenda to deck"}</button>
         </footer>
       </div>
     </div> : null}

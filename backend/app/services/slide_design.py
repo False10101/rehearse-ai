@@ -236,48 +236,117 @@ def shape_evidence(shape, slide, index):
     }
 
 
+def _polygon_area(points):
+    return abs(sum(x * points[(i + 1) % len(points)][1] -
+                   y * points[(i + 1) % len(points)][0]
+                   for i, (x, y) in enumerate(points))) / 2 if points else 0
+
+
+def _corners(region):
+    if region.get("slide_corners"):
+        return region["slide_corners"]
+    x, y, w, h = (region[key] for key in ("left", "top", "width", "height"))
+    return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+
+
+def _intersection_area(subject, clip):
+    """Clip two transformed rectangles, including flipped corner order."""
+    orientation = sum(x * clip[(i + 1) % len(clip)][1] -
+                      y * clip[(i + 1) % len(clip)][0]
+                      for i, (x, y) in enumerate(clip))
+    if not orientation:
+        return 0
+    sign = 1 if orientation > 0 else -1
+    output = list(subject)
+    for i, a in enumerate(clip):
+        b = clip[(i + 1) % len(clip)]
+        def distance(point):
+            return sign * ((b[0] - a[0]) * (point[1] - a[1]) -
+                           (b[1] - a[1]) * (point[0] - a[0]))
+        previous_points, output = output, []
+        if not previous_points:
+            break
+        previous = previous_points[-1]
+        previous_distance = distance(previous)
+        for current in previous_points:
+            current_distance = distance(current)
+            if (current_distance >= 0) != (previous_distance >= 0):
+                fraction = previous_distance / (previous_distance - current_distance)
+                output.append((previous[0] + fraction * (current[0] - previous[0]),
+                               previous[1] + fraction * (current[1] - previous[1])))
+            if current_distance >= 0:
+                output.append(current)
+            previous, previous_distance = current, current_distance
+    return _polygon_area(output)
+
+
+def _segment_crosses_polygon(start, end, polygon):
+    """Line shapes may have zero width/height, so an area test cannot see them."""
+    orientation = sum(x * polygon[(i + 1) % len(polygon)][1] -
+                      y * polygon[(i + 1) % len(polygon)][0]
+                      for i, (x, y) in enumerate(polygon))
+    sign = 1 if orientation > 0 else -1
+    enter, leave = 0.0, 1.0
+    for i, a in enumerate(polygon):
+        b = polygon[(i + 1) % len(polygon)]
+        def distance(point):
+            return sign * ((b[0] - a[0]) * (point[1] - a[1]) -
+                           (b[1] - a[1]) * (point[0] - a[0]))
+        first, last = distance(start), distance(end)
+        if first < 0 and last < 0:
+            return False
+        if (first < 0) != (last < 0):
+            crossing = first / (first - last)
+            if first < 0:
+                enter = max(enter, crossing)
+            else:
+                leave = min(leave, crossing)
+    return leave > enter and start != end
+
+
 def overlap_candidates(slide):
-    """Find later solid shapes intersecting earlier text, not confirmed hidden glyphs."""
+    """Locate possible text intersections, never assert covered glyphs from boxes."""
     candidates = []
     for region in slide.get("text_regions", []):
         text = " ".join(p["text"] for p in region["paragraphs"]).strip()
-        if not text or region["width"] <= 0 or region["height"] <= 0:
-            continue
-        own = next(
-            (s for s in slide.get("shape_evidence", []) if s["z_order"] == region["region"]), None
-        )
-        if not own or own["coordinate_scope"] != "slide" or own["rotation"]:
+        corners = _corners(region)
+        area = _polygon_area(corners)
+        if not text or not area:
             continue
         for shape in slide.get("shape_evidence", []):
-            if (
-                shape["z_order"] <= region["region"]
-                or not shape["fill_color"]
-                or shape["coordinate_scope"] != "slide"
-                or shape["rotation"]
-            ):
+            if shape["z_order"] == region["region"]:
                 continue
-            left = max(region["left"], shape["left"])
-            top = max(region["top"], shape["top"])
-            right = min(region["left"] + region["width"], shape["left"] + shape["width"])
-            bottom = min(region["top"] + region["height"], shape["top"] + shape["height"])
-            if right <= left or bottom <= top:
+            is_line = shape.get("raw_geometry") == "line" or shape.get("line") is not None
+            # Earlier filled panels are ordinary backgrounds. Strokes/arrows can
+            # still impair a label even when drawn behind its black letters.
+            if shape["z_order"] < region["region"] and not is_line:
                 continue
-            fraction = (right - left) * (bottom - top) / (region["width"] * region["height"])
-            candidates.append(
-                {
-                    "text_region": region["region"],
-                    "foreground_shape": shape["z_order"],
-                    "source_text": text,
-                    "box_overlap_fraction": round(fraction, 3),
-                    "crop_bounds": [
-                        min(region["left"], shape["left"]),
-                        min(region["top"], shape["top"]),
-                        max(region["left"] + region["width"], shape["left"] + shape["width"]),
-                        max(region["top"] + region["height"], shape["top"] + shape["height"]),
-                    ],
-                    "status": "candidate_requires_visual_confirmation",
-                }
-            )
+            if not (shape.get("fill_color") or is_line or shape.get("element_type") == "pic"
+                    or shape.get("text")):
+                continue
+            shape_corners = _corners(shape)
+            intersection = _intersection_area(corners, shape_corners)
+            if intersection <= 0:
+                endpoints = (shape.get("line") or {}).get("slide_endpoints") or [
+                    shape_corners[0], shape_corners[2]]
+                if not (is_line and not _polygon_area(shape_corners) and
+                        _segment_crosses_polygon(*endpoints, corners)):
+                    continue
+            candidates.append({
+                "text_region": region["region"],
+                "foreground_shape": shape["z_order"],
+                "source_text": text,
+                "shape_kind": shape.get("raw_geometry") or shape.get("geometry"),
+                "drawn_before_text": shape["z_order"] < region["region"],
+                "box_overlap_fraction": round(intersection / area, 3),
+                "crop_bounds": [min(region["left"], shape["left"]),
+                                min(region["top"], shape["top"]),
+                                max(region["left"] + region["width"],
+                                    shape["left"] + shape["width"]),
+                                max(region["top"] + region["height"],
+                                    shape["top"] + shape["height"])],
+                "status": "candidate_requires_visual_confirmation",
+            })
     return sorted(candidates, key=lambda item: item["box_overlap_fraction"], reverse=True)
 
 
@@ -414,9 +483,11 @@ def deck_style_evidence(slides):
 
 
 def design_findings(slide):
-    """Emit definite overflow and low contrast on a known solid local background."""
+    """Emit low contrast on a known solid local background.
+
+    Text-box bounds are not glyph bounds; overflow needs rendered confirmation.
+    """
     findings = []
-    width, height = slide.get("slide_width"), slide.get("slide_height")
     shapes = slide.get("shape_evidence", [])
     for region in slide.get("text_regions", []):
         text = " ".join(p["text"] for p in region["paragraphs"]).strip()
@@ -425,21 +496,6 @@ def design_findings(slide):
         own_shape = next((s for s in shapes if s["z_order"] == region["region"]), None)
         if own_shape and (own_shape["coordinate_scope"] != "slide" or own_shape["rotation"]):
             continue  # local group coordinates and rotated boxes need rendering confirmation
-        label = text[:100]
-        if (
-            width
-            and height
-            and (
-                region["left"] < 0
-                or region["top"] < 0
-                or region["left"] + region["width"] > width
-                or region["top"] + region["height"] > height
-            )
-        ):
-            findings.append(
-                f"[HIGH] Move the text box containing “{label}” inside the slide "
-                "boundaries and check the preview for cut-off content."
-            )
         background = slide.get("bg_color")
         # Require fully containing, unrotated rectangles; intersecting/complex shapes are uncertain.
         for shape in shapes:

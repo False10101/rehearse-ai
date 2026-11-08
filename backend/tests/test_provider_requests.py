@@ -116,8 +116,8 @@ def test_slide_analysis_does_not_multiply_exhausted_provider_retries(monkeypatch
     with pytest.raises(slide_analyzer.SlideAnalysisGenerationError) as caught:
         slide_analyzer.analyze([{"num": 1, "text": []}])
     assert caught.value.error_code == "AI_PROVIDER_BUSY"
-    assert len(calls) == 3
-    assert sleeps == [120, 120]
+    assert len(calls) == 1
+    assert sleeps == []
 
 
 def test_transcript_uses_shared_retry_policy(monkeypatch):

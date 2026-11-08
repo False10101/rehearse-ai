@@ -61,8 +61,8 @@ def _retry_seconds(value):
             return None
 
 
-def post_provider_request(url, *, headers, json, timeout):
-    for attempt in range(1, 4):
+def post_provider_request(url, *, headers, json, timeout, max_attempts=3):
+    for attempt in range(1, max_attempts + 1):
         response = requests.post(url, headers=headers, json=json, timeout=timeout)
         # Successful responses are decoded/validated by the calling feature.
         status = getattr(response, "status_code", 200)
@@ -97,14 +97,14 @@ def post_provider_request(url, *, headers, json, timeout):
         if token:
             safe_body = safe_body.replace(token, "[REDACTED]")
         logger.error(
-            "AI provider HTTP %s model=%s attempt=%s/3 code=%s retry_after=%s response=%s",
-            status, json.get("model"), attempt, code, delay, safe_body,
+            "AI provider HTTP %s model=%s attempt=%s/%s code=%s retry_after=%s response=%s",
+            status, json.get("model"), attempt, max_attempts, code, delay, safe_body,
         )
-        if not retryable or attempt == 3 or delay > MAX_RETRY_WAIT_SECONDS:
+        if not retryable or attempt == max_attempts or delay > MAX_RETRY_WAIT_SECONDS:
             raise ProviderRequestError(response, code, delay)
         logger.warning(
-            "AI provider retry scheduled model=%s wait_seconds=%s next_attempt=%s/3",
-            json.get("model"), delay, attempt + 1,
+            "AI provider retry scheduled model=%s wait_seconds=%s next_attempt=%s/%s",
+            json.get("model"), delay, attempt + 1, max_attempts,
         )
         time.sleep(delay)
     raise AssertionError("Provider retry loop did not return or raise")

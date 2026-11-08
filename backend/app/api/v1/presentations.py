@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
+from pptx import Presentation as PowerPointPresentation
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,7 +23,9 @@ from app.services.agenda_generator import (
     AGENDA_LAYOUTS,
     AGENDA_THEMES,
     AgendaGenerationError,
+    existing_agenda_sections,
     generate_agenda_deck,
+    update_agenda_deck,
 )
 from app.services.agenda_layouts import agenda_catalog
 from app.services.processing_diagnostics import log_processing_state
@@ -132,6 +135,7 @@ class PresentationResponse(PresentationListItem):
 
 
 class GenerateAgendaRequest(BaseModel):
+    action: Literal["create", "regenerate", "design"] = "create"
     layout: Literal[
         "paired-sections",
         "editorial-list",
@@ -513,6 +517,9 @@ def generate_agenda(
     user=Depends(authenticated_user),
 ) -> GenerateAgendaResponse:
     presentation = owned_presentation(session, user.id, presentation_id)
+    # Serialize agenda writes for this deck, including requests from other tabs.
+    session.scalar(select(Presentation).where(Presentation.id == presentation.id).with_for_update())
+
     if presentation.status != "completed" or not presentation.storage_key:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -531,23 +538,44 @@ def generate_agenda(
             .order_by(Slide.slide_number)
         )
     )
-    if any(slide.extracted_content.get("generated_by") == "agenda" for slide in slides):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This presentation already has a generated agenda.",
-        )
+    analysis = session.scalar(
+        select(PresentationAnalysis).where(
+            PresentationAnalysis.presentation_id == presentation.id,
+            PresentationAnalysis.status == "completed",
+        ).order_by(PresentationAnalysis.created_at.desc())
+    )
+    generated = next((slide for slide in slides
+                      if slide.extracted_content.get("generated_by") == "agenda"), None)
+    if request.action == "create" and (
+        generated or (analysis and analysis.agenda_status == "found")
+    ):
+        raise HTTPException(status_code=409, detail="This presentation already has an agenda.")
+    if request.action != "create" and generated is None:
+        raise HTTPException(status_code=409, detail="Only an app-generated agenda can be updated.")
     source_path = storage_path(presentation.storage_key)
     try:
         with tempfile.TemporaryDirectory(prefix="rehearse-agenda-") as temp_dir:
             temporary_directory = Path(temp_dir)
             generated_path = temporary_directory / "with-agenda.pptx"
-            items, insert_after_slide = generate_agenda_deck(
-                source_path,
-                generated_path,
-                [slide.extracted_content for slide in slides],
-                request.layout,
-                request.theme,
-            )
+            sections = None
+            if generated:
+                inserted_slide_number = generated.slide_number
+                insert_after_slide = inserted_slide_number - 1
+                sections = update_agenda_deck(
+                    source_path, generated_path, [slide.extracted_content for slide in slides],
+                    inserted_slide_number, request.layout, request.theme,
+                    regenerate=request.action == "regenerate",
+                )
+                items = [section["title"] for section in sections]
+            else:
+                items, insert_after_slide = generate_agenda_deck(
+                    source_path, generated_path, [slide.extracted_content for slide in slides],
+                    request.layout, request.theme,
+                )
+                inserted_slide_number = insert_after_slide + 1
+                # Recover the full section text from the freshly rendered native layout.
+                sections = existing_agenda_sections(PowerPointPresentation(generated_path),
+                    inserted_slide_number, {"agenda_items": items, "agenda_layout": request.layout})
             rendered_images = render_slides_to_images(generated_path, temporary_directory)
             extracted_slides = extract_slides(generated_path)
             inserted_slide_number = insert_after_slide + 1
@@ -556,26 +584,26 @@ def generate_agenda(
             # the app. Replace it only after generation and rendering both succeed.
             shutil.copy2(generated_path, source_path)
 
-            # Shift from the end to retain the unique (presentation, number) index.
-            for slide in reversed(slides):
-                if slide.slide_number > insert_after_slide:
-                    slide.slide_number += 1
-                    session.flush()
-
+            # Replacements keep slide IDs, numbering, feedback and transcripts intact.
+            if not generated:
+                for slide in reversed(slides):
+                    if slide.slide_number > insert_after_slide:
+                        slide.slide_number += 1
+                        session.flush()
             slides_by_number = {slide.slide_number: slide for slide in slides}
-            agenda_slide = Slide(
-                presentation_id=presentation.id,
-                slide_number=inserted_slide_number,
-                title="Agenda",
-                layout_name="Generated agenda",
-                extracted_content={},
-            )
-            session.add(agenda_slide)
-            session.flush()
-            slides_by_number[inserted_slide_number] = agenda_slide
+            if not generated:
+                agenda_slide = Slide(
+                    presentation_id=presentation.id, slide_number=inserted_slide_number,
+                    title="Agenda", layout_name="Generated agenda", extracted_content={},
+                )
+                session.add(agenda_slide)
+                session.flush()
+                slides_by_number[inserted_slide_number] = agenda_slide
 
             for extracted in extracted_slides:
                 number = extracted["num"]
+                if generated and number != inserted_slide_number:
+                    continue
                 slide = slides_by_number[number]
                 content = dict(extracted)
                 if number == inserted_slide_number:
@@ -584,6 +612,7 @@ def generate_agenda(
                             "generated_by": "agenda",
                             "title": "Agenda",
                             "agenda_items": items,
+                            "agenda_sections": sections,
                             "agenda_layout": request.layout,
                             "agenda_theme": request.theme,
                         }
@@ -603,35 +632,24 @@ def generate_agenda(
                 slide.image_storage_key = image_key
 
             presentation.slide_count = len(extracted_slides)
-            analysis = session.scalar(
-                select(PresentationAnalysis)
-                .where(
-                    PresentationAnalysis.presentation_id == presentation.id,
-                    PresentationAnalysis.status == "completed",
-                )
-                .order_by(PresentationAnalysis.created_at.desc())
-            )
             if analysis:
-                raw_output = shift_deck_feedback_references(
-                    analysis.raw_output,
-                    insert_after_slide,
-                )
-                shifted_feedback = []
-                for feedback in raw_output.get("per_slide", []):
-                    if not isinstance(feedback, dict):
-                        continue
-                    updated_feedback = dict(feedback)
-                    if (
-                        isinstance(updated_feedback.get("num"), int)
-                        and updated_feedback["num"] > insert_after_slide
-                    ):
-                        updated_feedback["num"] += 1
-                    shifted_feedback.append(updated_feedback)
+                raw_output = dict(analysis.raw_output)
+                if not generated:
+                    raw_output = shift_deck_feedback_references(raw_output, insert_after_slide)
+                    shifted_feedback = []
+                    for feedback in raw_output.get("per_slide", []):
+                        updated_feedback = dict(feedback)
+                        if updated_feedback["num"] > insert_after_slide:
+                            updated_feedback["num"] += 1
+                        shifted_feedback.append(updated_feedback)
+                else:
+                    shifted_feedback = raw_output.get("per_slide", [])
                 raw_output["per_slide"] = shifted_feedback
                 raw_output["agenda_status"] = "found"
                 raw_output["generated_agenda"] = {
                     "slide_number": inserted_slide_number,
                     "items": items,
+                    "sections": sections,
                     "layout": request.layout,
                     "theme": request.theme,
                 }

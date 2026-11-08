@@ -75,17 +75,12 @@ def test_readability_advice_does_not_need_specific_keywords():
     assert item["improvement_suggestions"] == [review["suggestion"]]
 
 
-def test_combined_boundary_fix_replaces_narrow_duplicates(monkeypatch):
-    from app.services import slide_analyzer
-    monkeypatch.setattr(slide_analyzer, "design_findings", lambda _: [
-        '[HIGH] Move “Dependency” inside slide boundaries.',
-        '[HIGH] Move “Owner” inside slide boundaries.'])
-    combined = '[HIGH] Move Dependency left and Owner up within the slide bounds.'
+def test_boundary_advice_is_not_injected_from_box_geometry():
     item = {"num": 1, "table_tips": [], "visual_hierarchy_issues": None,
-            "improvement_suggestions": ['[HIGH] Move Dependency inside.', combined,
-                                        '[MEDIUM] Explain Owner responsibilities.']}
+            "improvement_suggestions": ["[MEDIUM] Explain Owner responsibilities."]}
     apply_deterministic_findings({"per_slide": [item]}, [{"num": 1}])
-    assert item["improvement_suggestions"] == [combined, '[MEDIUM] Explain Owner responsibilities.']
+    assert item["improvement_suggestions"] == ["[MEDIUM] Explain Owner responsibilities."]
+    assert item["visual_hierarchy_issues"] is None
 
 
 def test_unknown_vision_ids_do_not_become_facts():
@@ -225,89 +220,38 @@ def test_intent_words_do_not_reject_an_entire_response():
     )
 
 
-@pytest.mark.parametrize("failure", ["malformed", "truncated"])
-def test_http_200_invalid_vision_response_retries(monkeypatch, tmp_path, failure):
-    from app.services import slide_analyzer
-
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_plain_vision_observations_do_not_require_checklist_or_retry(monkeypatch, tmp_path, finish_reason):
+    from PIL import Image
+    from app.services import slide_analyzer as service
+    from types import SimpleNamespace
     image = tmp_path / "slide.png"
-    image.write_bytes(b"image")  # No candidates: crop rendering is not needed.
+    Image.new("RGB", (800, 450)).save(image)
     calls = []
-
-    class Response:
-        def raise_for_status(self):
-            pass  # HTTP 200 does not imply valid analysis
-
-        def json(self):
-            if len(calls) == 1:
-                content = (
-                    "not JSON"
-                    if failure == "malformed"
-                    else json.dumps(
-                        {"description": "The title says “Invented heading”.", "checks": []}
-                    )
-                )
-                return {
-                    "choices": [
-                        {
-                            "finish_reason": "length" if failure == "truncated" else "stop",
-                            "message": {"content": content},
-                        }
-                    ]
-                }
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "description": "A large heading sits above the body.",
-                                    "checks": [],
-                                }
-                            )
-                        }
-                    }
-                ]
-            }
-
     def post(*args, **kwargs):
-        calls.append(kwargs["json"]["messages"][0]["content"][1]["text"])
-        return Response()
-
-    monkeypatch.setattr(slide_analyzer, "openrouter_headers", lambda: {})
-    monkeypatch.setattr(slide_analyzer.requests, "post", post)
-    monkeypatch.setattr(slide_analyzer.time, "sleep", lambda _: None)
-    _, result = slide_analyzer.caption_slide_image(1, image, "Real heading")
-    assert len(calls) == 2
-    assert "previous response was rejected" in calls[1]
-    assert json.loads(result)["description"] == "A large heading sits above the body."
+        calls.append(kwargs)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+            "choices": [{"finish_reason": finish_reason,
+                         "message": {"content": "A diagram connects three panels."}}]})
+    monkeypatch.setattr(service, "openrouter_headers", lambda: {})
+    monkeypatch.setattr(service, "post_provider_request", post)
+    assert service.caption_slide_image(1, image, "")[1] == "A diagram connects three panels."
+    assert len(calls) == 1
 
 
-def test_three_invalid_vision_responses_fail_not_pass_broken_json(monkeypatch, tmp_path, caplog):
-    from app.services import slide_analyzer
-
+def test_empty_vision_response_has_only_one_retry(monkeypatch, tmp_path):
+    from PIL import Image
+    from app.services import slide_analyzer as service
+    from types import SimpleNamespace
     image = tmp_path / "slide.png"
-    image.write_bytes(b"image")
+    Image.new("RGB", (800, 450)).save(image)
     calls = []
-
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {
-                "choices": [
-                    {"message": {"content": '{"description": ["Wrong type"], "checks": []}'}}
-                ]
-            }
-
     def post(*args, **kwargs):
-        calls.append(1)
-        return Response()
-
-    monkeypatch.setattr(slide_analyzer, "openrouter_headers", lambda: {})
-    monkeypatch.setattr(slide_analyzer.requests, "post", post)
-    monkeypatch.setattr(slide_analyzer.time, "sleep", lambda _: None)
+        calls.append(kwargs)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+            "choices": [{"message": {"content": ""}}]})
+    monkeypatch.setattr(service, "openrouter_headers", lambda: {})
+    monkeypatch.setattr(service, "post_provider_request", post)
     with pytest.raises(RuntimeError, match="Vision analysis failed"):
-        slide_analyzer.caption_slide_image(1, image, "Real heading")
-    assert len(calls) == 3
-    assert "nonempty description string and checks array" in caplog.text
+        service.caption_slide_image(1, image, "")
+    assert len(calls) == 2

@@ -3,7 +3,7 @@ from copy import deepcopy
 from app.services.slide_payload import compact_slide_evidence
 
 
-def test_compaction_keeps_all_checks_and_their_exact_inline_evidence():
+def test_compaction_retains_evidence_without_internal_checklist():
     typography = [{"region": 1, "source_text": "Invisible words", "min_font_size_pt": 12}]
     overlap = [{"text_region": 1, "foreground_shape": 3, "coverage_fraction": .8}]
     alignment = [{"shape_ids": [1, 2], "top_spread_fraction": .1}]
@@ -23,9 +23,10 @@ def test_compaction_keeps_all_checks_and_their_exact_inline_evidence():
     compact = compact_slide_evidence(slide)
     assert slide == before
     assert compact["text"] == slide["text"]
-    for original, check in zip(slide["required_visual_checks"], compact["required_visual_checks"]):
-        assert check["id"] == original["id"]
-        assert check["evidence"] == original["evidence"]
+    assert "required_visual_checks" not in compact
+    assert compact["typography_review"] == typography
+    assert compact["overlap_candidates"] == overlap
+    assert compact["alignment_review"] == alignment
 
 
 def test_only_exactly_redundant_slide_geometry_is_removed():
@@ -43,3 +44,16 @@ def test_only_exactly_redundant_slide_geometry_is_removed():
     assert compact["text_regions"][1]["slide_corners"] == rotated["slide_corners"]
     assert compact["text_regions"][2] == grouped
     assert compact["tables"] == [[['$9 or $99?', 'Unlimited (max 5)']]]
+
+
+def test_raw_xml_stays_in_storage_but_not_model_payload():
+    slide = {"shape_evidence": [{"custom_geometry_xml": "large xml", "left": 10,
+        "slide_corners": [[1, 2]], "line": {"explicit_style_xml": "xml", "head_end": "triangle"}}]}
+    before = deepcopy(slide)
+    result = compact_slide_evidence(slide)
+    assert slide == before
+    shape = result["shape_evidence"][0]
+    assert "custom_geometry_xml" not in shape
+    assert shape["left"] == 10
+    assert shape["slide_corners"] == [[1, 2]]
+    assert shape["line"] == {"head_end": "triangle"}

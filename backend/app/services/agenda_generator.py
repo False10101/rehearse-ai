@@ -241,3 +241,49 @@ def generate_agenda_deck(
     # Keep the public API's title list compatible. Descriptions remain editable
     # on the slide and are persisted by the existing slide extraction pipeline.
     return [item["title"] for item in items], insert_after_slide
+
+
+def existing_agenda_sections(deck, number: int, content: dict) -> list[dict[str, str]]:
+    """Read saved sections, or recover descriptions from our older native layouts."""
+    if content.get("agenda_sections"):
+        return content["agenda_sections"]
+    titles = content.get("agenda_items", [])
+    layout = content.get("agenda_layout")
+    if not titles or layout not in AGENDA_LAYOUTS:
+        raise AgendaGenerationError("This agenda's content is unavailable. Regenerate its content first.")
+    markers = [{"title": title, "description": f"description-{i}"}
+               for i, title in enumerate(titles)]
+    scene = agenda_scene(markers, layout)
+    shapes = list(deck.slides[number - 1].shapes)
+    if len(scene) != len(shapes):
+        raise AgendaGenerationError("This agenda's layout has changed. Regenerate its content first.")
+    sections = [{"title": title, "description": ""} for title in titles]
+    for node, shape in zip(scene, shapes, strict=True):
+        if node["kind"] != "text":
+            continue
+        for i, marker in enumerate(markers):
+            if " ".join(node["lines"]) == marker["description"]:
+                sections[i]["description"] = " ".join(shape.text.split())
+    return sections
+
+
+def update_agenda_deck(source_path: Path, destination: Path, slides: list[dict],
+                       number: int, layout: str, theme: str, regenerate: bool):
+    """Redraw only the marked generated slide; preserve its identity and position."""
+    if layout not in AGENDA_LAYOUTS or theme not in AGENDA_THEMES:
+        raise ValueError("Unknown agenda layout or theme.")
+    content = next((s for s in slides if s["num"] == number), None)
+    if not content or content.get("generated_by") != "agenda":
+        raise AgendaGenerationError("Only an app-generated agenda can be updated.")
+    deck = Presentation(source_path)
+    if regenerate:
+        outline = [{**slide, "num": i} for i, slide in enumerate(
+            (s for s in slides if s.get("generated_by") != "agenda"), 1)]
+        sections, _ = _items_from_model(outline)
+    else:
+        sections = existing_agenda_sections(deck, number, content)
+    draw_agenda(deck.slides[number - 1], sections, layout, theme,
+                deck.slide_width, deck.slide_height)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    deck.save(destination)
+    return sections

@@ -84,7 +84,7 @@ def test_wording_and_typography_are_independent_prompt_checks():
     prompt = build_analysis_prompt([{"num": 1, "title": "Example"}])
     assert "circular definitions, tautologies" in prompt
     assert "Scope/overload feedback does not substitute for wording feedback" in prompt
-    assert "Reducing scope alone does not address typography" in prompt
+    assert "Contrast and font-size concerns are distinct" in prompt
 
 
 def test_foreground_overlap_is_candidate_not_automatic_fault(tmp_path):
@@ -110,7 +110,7 @@ def test_foreground_overlap_is_candidate_not_automatic_fault(tmp_path):
     assert not any("obscur" in item for item in design_findings(extracted))
 
 
-def test_overlap_crops_use_one_existing_vision_request(monkeypatch, tmp_path):
+def test_partial_overlap_gets_one_detail_in_same_request_without_geometry_dump(monkeypatch, tmp_path):
     from PIL import Image
 
     from app.services import slide_analyzer
@@ -190,7 +190,7 @@ def test_overlap_crops_use_one_existing_vision_request(monkeypatch, tmp_path):
     assert len(calls) == 1
     content = calls[0]["messages"][0]["content"]
     assert len([item for item in content if item["type"] == "image_url"]) == 2
-    assert "candidate_requires_visual_confirmation" in content[1]["text"]
+    assert "candidate_requires_visual_confirmation" not in content[1]["text"]
 
 
 def test_theme_color_and_layout_placeholder_inheritance(tmp_path):
@@ -324,3 +324,33 @@ def test_contrast_fallback_does_not_repeat_equivalent_model_advice(monkeypatch):
     result["per_slide"][0]["improvement_suggestions"] = ["[MEDIUM] Explain the metric."]
     slide_analyzer.apply_deterministic_findings(result, [{"num": 1}])
     assert len(result["per_slide"][0]["improvement_suggestions"]) == 2
+
+
+def test_overflowing_box_does_not_prove_visible_text_is_clipped():
+    from app.services.slide_analyzer import apply_deterministic_findings, build_analysis_prompt
+
+    # Unused space at the right/bottom of a text box may lie outside the page.
+    # This is true for any text, not an exemption based on a numeric label.
+    for text in ("6", "Footnote", "Section heading"):
+        slide = {"num": 1, "slide_width": 100, "slide_height": 100,
+                 "text_regions": [{"region": 1, "left": 90, "top": 90,
+                    "width": 20, "height": 20, "paragraphs": [{"text": text}],
+                    "runs": [{"t": text, "color": "#000000"}]}]}
+        assert design_findings(slide) == []
+        item = {"num": 1, "table_tips": [], "improvement_suggestions": [],
+                "visual_hierarchy_issues": None}
+        apply_deterministic_findings({"per_slide": [item]}, [slide])
+        assert item["improvement_suggestions"] == []
+        assert item["visual_hierarchy_issues"] is None
+        assert "Text-box bounds are not rendered letter bounds" in build_analysis_prompt([slide])
+
+
+def test_visually_reported_clipping_is_preserved():
+    from app.services.slide_analyzer import apply_deterministic_findings
+
+    suggestion = "[MEDIUM] Move the heading inward; its final letters are visibly cut off."
+    item = {"num": 1, "table_tips": [], "improvement_suggestions": [suggestion],
+            "visual_hierarchy_issues": "The heading's final letters are clipped."}
+    apply_deterministic_findings({"per_slide": [item]}, [{"num": 1}])
+    assert item["improvement_suggestions"] == [suggestion]
+    assert item["visual_hierarchy_issues"] == "The heading's final letters are clipped."

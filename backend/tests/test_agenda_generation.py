@@ -182,3 +182,61 @@ def test_agenda_inserted_at_model_position_preserves_other_slides(monkeypatch, t
         "Findings",
     ]
     assert result.slides[1]._element.get("showMasterSp") == "0"
+
+
+@pytest.mark.parametrize("old_layout", list(AGENDA_LAYOUTS))
+def test_design_change_reads_legacy_descriptions_without_ai(tmp_path, monkeypatch, old_layout):
+    source, output = tmp_path / "source.pptx", tmp_path / "updated.pptx"
+    deck = Presentation()
+    deck.slides.add_slide(deck.slide_layouts[0]).shapes.title.text = "Cover"
+    agenda = deck.slides.add_slide(deck.slide_layouts[6])
+    generator.draw_agenda(agenda, PREVIEW_ITEMS, old_layout, "ocean",
+                          deck.slide_width, deck.slide_height)
+    deck.slides.add_slide(deck.slide_layouts[0]).shapes.title.text = "Findings"
+    deck.save(source)
+    original = Presentation(source)
+    agenda_id = list(original.slides._sldIdLst)[1].id
+    original_xml = [original.slides[i]._element.xml for i in (0, 2)]
+    content = {"num": 2, "generated_by": "agenda", "agenda_layout": old_layout,
+               "agenda_items": [s["title"] for s in PREVIEW_ITEMS]}
+    monkeypatch.setattr(generator, "_items_from_model", Mock(side_effect=AssertionError("No AI")))
+    sections = generator.update_agenda_deck(source, output, [{"num": 1}, content, {"num": 3}],
+                                            2, "statement-grid", "forest", regenerate=False)
+    assert sections == PREVIEW_ITEMS
+    updated = Presentation(output)
+    assert len(updated.slides) == 3
+    assert list(updated.slides._sldIdLst)[1].id == agenda_id
+    assert [updated.slides[i]._element.xml for i in (0, 2)] == original_xml
+    text = " ".join(s.text.replace("\n", " ") for s in updated.slides[1].shapes if s.has_text_frame)
+    for item in PREVIEW_ITEMS:
+        assert item["title"] in text and item["description"] in text
+
+
+def test_regenerate_uses_only_original_content_and_replaces_in_place(tmp_path, monkeypatch):
+    source, output = tmp_path / "source.pptx", tmp_path / "updated.pptx"
+    deck = Presentation()
+    for title in ("Cover", "Old agenda", "Results"):
+        deck.slides.add_slide(deck.slide_layouts[0]).shapes.title.text = title
+    deck.save(source)
+    model = Mock(return_value=(PREVIEW_ITEMS, 1))
+    monkeypatch.setattr(generator, "_items_from_model", model)
+    sections = generator.update_agenda_deck(source, output, [
+        {"num": 1, "title": "Cover"}, {"num": 2, "generated_by": "agenda"},
+        {"num": 3, "title": "Results"}], 2, "paired-sections", "violet", regenerate=True)
+    assert sections == PREVIEW_ITEMS
+    assert [s["title"] for s in model.call_args.args[0]] == ["Cover", "Results"]
+    assert [s["num"] for s in model.call_args.args[0]] == [1, 2]
+    updated = Presentation(output)
+    assert len(updated.slides) == 3
+    assert updated.slides[0].shapes.title.text == "Cover"
+    assert updated.slides[2].shapes.title.text == "Results"
+
+
+def test_update_never_rewrites_an_original_agenda(tmp_path, monkeypatch):
+    model = Mock()
+    monkeypatch.setattr(generator, "_items_from_model", model)
+    with pytest.raises(generator.AgendaGenerationError, match="Only an app-generated"):
+        generator.update_agenda_deck(tmp_path / "original.pptx", tmp_path / "output.pptx",
+                                     [{"num": 1, "title": "Agenda"}], 1,
+                                     "paired-sections", "violet", regenerate=True)
+    model.assert_not_called()
