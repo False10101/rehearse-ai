@@ -195,6 +195,51 @@ def test_hand_visible_in_centre_or_at_edge_is_reported_immediately():
         assert event["evidence"] == "Hand visible in the camera frame"
 
 
+@pytest.mark.parametrize("face_visible", [True, False])
+def test_browser_hand_points_with_zero_visibility_reach_tracker(face_visible):
+    # HandLandmarker's web result defaults the unused visibility field to zero.
+    points = [[0.5, 0.7, 0, 0] for _ in range(21)]
+    observation = _client_observation(
+        {
+            "type": "observation",
+            "person_detected": face_visible,
+            "hands": [points],
+            "hands_updated": True,
+        }
+    )
+    t = ready()
+    r = drive(t, observation, 1)
+    rows = [e for e in r["session_events"] if e["kind"] == "hand_in_view"]
+    assert len(rows) == 1 and rows[0]["active"]
+    assert r["status"]["hands"] == "In view"
+    r = drive(t, replace(observation, hands=[]), 0.1)
+    assert all(not e["active"] for e in r["session_events"])
+
+
+def test_face_loss_does_not_split_hand_event_or_leave_stale_hand_active():
+    t = ready()
+    drive(t, replace(NEUTRAL, hands=[hand()]), 0.3)
+    missing_face = FrameObservation(False, hands=[hand()])
+    r = drive(t, missing_face, 1)
+    rows = [e for e in r["session_events"] if e["kind"] == "hand_in_view"]
+    assert len(rows) == 1 and rows[0]["active"]
+    r = drive(t, replace(missing_face, hands=None, hands_updated=False), 0.8)
+    assert all(not e["active"] for e in r["session_events"])
+    assert r["status"]["hands"] == "Not assessed"
+
+
+def test_recent_face_position_allows_hand_covering_detection_during_face_loss():
+    t = ready()
+    debug = {"face": {"x": 0.4, "y": 0.2, "width": 0.2, "height": 0.3}}
+    drive(t, replace(NEUTRAL, debug=debug), 0.1)
+    r = drive(t, FrameObservation(False, hands=[hand(0.5, 0.4)]), 0.7)
+    assert "face_obstruction" in kinds(r)
+    assert r["status"]["hands"] == "Hand covering face"
+    # Face geometry expires; hand visibility alone must not imply face covering.
+    r = drive(t, FrameObservation(False, hands=[hand(0.5, 0.4)]), 2.1)
+    assert not any(e["active"] and e["kind"] == "face_obstruction" for e in r["session_events"])
+
+
 def test_missing_or_entirely_outside_hands_do_not_trigger_visibility_warning():
     for hands in [None, [], [hand(-0.2, 0.7)], [hand(1.2, 0.7)]]:
         r = drive(ready(), replace(NEUTRAL, hands=hands), 2)

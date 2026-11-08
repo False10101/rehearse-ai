@@ -302,29 +302,46 @@ class LiveCoachingTracker:
             return turns[0], len(turns)
         return None
 
-    def _reset_motion(self, now, preserve_object=False):
+    def _reset_motion(self, now, preserve_object=False, preserve_hands=False):
+        # Face loss invalidates face/body motion, not independently detected hands.
+        def retained(key):
+            return (preserve_object and key == "object_obstruction") or (
+                preserve_hands
+                and key.startswith(
+                    (
+                        "hand_",
+                        "hand_motion_",
+                        "hand_rubbing",
+                        "touch",
+                        "face_obstruction",
+                        "repeated_face_touching",
+                        "repetitive_hand_motion",
+                    )
+                )
+            )
+
+        hand_timestamp, hand_text = self.last_hands_at, self.hands_text
         for kind in list(self.active):
-            if not (preserve_object and kind == "object_obstruction"):
+            if not retained(kind):
                 self._close(kind, now)
-        object_start = self.pending.get("object_obstruction") if preserve_object else None
-        self.pending.clear()
-        if object_start is not None:
-            self.pending["object_obstruction"] = object_start
+        for state in (self.pending, self.recovery, self.motion, self.last_pulse):
+            for key in list(state):
+                if not retained(key):
+                    state.pop(key, None)
         if not preserve_object:
             self.last_face = None
             self.objects = []
             self.last_objects_at = None
         self.hold_directions.clear()
-        self.recovery.clear()
         self.runs.clear()
         self.candidates.clear()
         self.completed_runs.clear()
-        self.motion.clear()
-        self.last_pulse.clear()
         self.pulse_cue = (0, "")
         self.samples.clear()
         self.last_body_at = self.last_hands_at = None
         self.body_text = self.hands_text = "Not assessed"
+        if preserve_hands:
+            self.last_hands_at, self.hands_text = hand_timestamp, hand_text
 
     def _head(self, angles, now):
         if angles is None:
@@ -572,10 +589,10 @@ class LiveCoachingTracker:
     def _hands(self, hands, targets, shoulder_width, now):
         # A detected hand counts anywhere inside the image, not just at an
         # edge. Ignore coordinates extrapolated entirely outside the image.
+        # HandLandmarker filters whole-hand presence itself. Unlike pose points,
+        # its landmarks do not supply visibility; the web SDK defaults it to zero.
         hands = [
-            hand
-            for hand in (hands or [])
-            if any(0 <= p[0] <= 1 and 0 <= p[1] <= 1 and p[3] >= 0.5 for p in hand)
+            hand for hand in (hands or []) if any(0 <= p[0] <= 1 and 0 <= p[1] <= 1 for p in hand)
         ]
         if not hands:
             self.hands_text = "Not assessed"
@@ -739,8 +756,9 @@ class LiveCoachingTracker:
         self.previous = now
         self.frames += 1
         self._object_obstruction(observation, now)
+        width = None
         if not observation.person_detected:
-            self._reset_motion(now, preserve_object=True)
+            self._reset_motion(now, preserve_object=True, preserve_hands=True)
             head_side, head_text, head_delta = None, "Not assessed", None
             eye_side, eye_text = None, "Not assessed"
         else:
@@ -780,15 +798,18 @@ class LiveCoachingTracker:
                 width = self._body(observation.body, posture_targets, now)
             elif "body" in self.baselines:
                 width = self.baselines["body"][2]
-            if observation.hands_updated:
-                self.last_hands_at = now
-                self._hands(observation.hands, observation.face_targets, width, now)
             if self.last_body_at is None or now - self.last_body_at > 0.7:
                 self.body_text = "Not assessed"
                 self._clear_category("body_", now)
                 self._hold("posture_drift", None, now, 3, "")
-            if self.last_hands_at is None or now - self.last_hands_at > 0.7:
-                self._hands(None, None, None, now)
+        if observation.hands_updated:
+            self.last_hands_at = now
+            targets = observation.face_targets if observation.person_detected else None
+            if targets is None and self.last_face and now - self.last_face[0] <= 2:
+                targets = self.last_face[2]
+            self._hands(observation.hands, targets, width, now)
+        if self.last_hands_at is None or now - self.last_hands_at > 0.7:
+            self._hands(None, None, None, now)
         # One cue, with short-lived pattern reminders above sustained-position cues.
         cue = "Keep presenting naturally"
         if self.active:
