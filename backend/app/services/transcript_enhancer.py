@@ -10,7 +10,7 @@ from app.services.provider_requests import luna_fast_routing, post_provider_requ
 from app.services.slide_analyzer import ANALYSIS_MODEL, OPENROUTER_API_URL, openrouter_headers
 
 TRANSCRIPT_MODEL = ANALYSIS_MODEL
-TRANSCRIPT_PROMPT_VERSION = "transcript-one-shot-v6"
+TRANSCRIPT_PROMPT_VERSION = "transcript-one-shot-v9"
 logger = logging.getLogger(__name__)
 Tone = Literal["auto", "persuasive", "informative", "conversational"]
 Style = Literal["natural", "formal"]
@@ -45,6 +45,16 @@ STYLE_RULES: dict[Style, str] = {
     "natural": "Use relaxed, natural spoken wording and contractions where appropriate.",
     "formal": "Use professional, respectful spoken wording that remains comfortable to say aloud.",
 }
+DURATION_RULES = {
+    45: "Short: give a concise spoken explanation of the main points.",
+    75: "Standard: develop the main points into a complete spoken explanation, with "
+    "enough context and connections for the audience to understand them. A brief "
+    "summary alone is not enough.",
+    105: "Detailed: give a fuller spoken explanation of the main points, developing "
+    "their meaning, connections and practical implications. Use relevant explanations "
+    "or examples where helpful. Provide noticeably more depth than Standard; a brief "
+    "summary alone is not enough.",
+}
 TRANSCRIPT_SYSTEM_PROMPT = (
     "You help presenters write and improve presentation transcripts: the exact words a human "
     "presenter will speak aloud to an audience. Follow the requested task and delivery settings. "
@@ -55,14 +65,16 @@ SPOKEN_WRITING_RULES = (
     "Use the current slide as the subject, with the rest of the presentation only for continuity. "
     "Preserve supplied facts and meaning while choosing suitable wording, explanations, "
     "and examples. "
-    "The spoken paragraphs contain the speech itself, not a report or critique about the slide."
+    "The spoken paragraphs contain the speech itself, not a report or critique about the slide. "
+    "Develop the explanation forward instead of repeating it in a closing recap. A brief "
+    "transition is enough after the point is explained; a conclusion slide may summarise "
+    "the presentation's takeaways."
 )
 FEEDBACK_INSTRUCTIONS = (
     "Provide separate feedback about the actual spoken transcript: its delivery tone, complex "
     "terms (including unfamiliar acronyms, technical terms, and jargon) with definitions and "
-    "pronunciation, and useful vocabulary improvements. Quote terms and original phrases from "
-    "the transcript. Vocabulary replacements preserve its meaning. Use empty arrays when no "
-    "terms or improvements are needed. Tone classification must be Persuasive, Informative, "
+    "pronunciation. Quote terms from the transcript. Use an empty complex_terms array when no "
+    "terms need explanation. Tone classification must be Persuasive, Informative, "
     "Aggressive, Neutral, or Conversational, with confidence from 0 to 1 and a short rationale. "
     "Keep this feedback outside the spoken paragraphs."
 )
@@ -79,13 +91,7 @@ FEEDBACK_JSON = {
         "confidence": 0.9,
         "rationale": "Reason based on the transcript",
     },
-    "vocabulary_upgrades": [
-        {
-            "original": "exact words from transcript",
-            "suggested": "replacement",
-            "reason": "why it helps",
-        }
-    ],
+    "vocabulary_upgrades": [],
 }
 
 
@@ -187,6 +193,50 @@ def _request_json(prompt: str, max_tokens: int = 4000, *, system_prompt: str | N
     return _parse_json_content(response)
 
 
+def _diagram_context(slide: dict) -> dict:
+    # Extracted text follows object order, not necessarily a diagram's arrows.
+    # Supply existing slide-space evidence, not inferred process relationships or
+    # bulky rendering XML. Group transforms and flips are already resolved here.
+    shapes = []
+    for shape in slide.get("shape_evidence", []):
+        if not isinstance(shape, dict):
+            continue
+        item = {
+            "id": shape.get("shape_id"),
+            "text": shape.get("text", ""),
+            "geometry": shape.get("geometry"),
+            "bounds": {key: shape.get(key) for key in ("left", "top", "width", "height")},
+            "slide_corners": shape.get("slide_corners", []),
+            "rotation": shape.get("rotation", 0),
+            "parent_group_ids": shape.get("parent_group_ids", []),
+        }
+        line = shape.get("line")
+        if isinstance(line, dict):
+            item["line"] = {
+                "slide_endpoints": line.get("slide_endpoints", []),
+                "start_marker": (line.get("head_end") or {}).get("type", "none"),
+                "end_marker": (line.get("tail_end") or {}).get("type", "none"),
+                "explicit_connections": line.get("explicit_connections", []),
+            }
+        shapes.append(item)
+    if not shapes:
+        return {}
+    return {
+        "slide_width": slide.get("slide_width"),
+        "slide_height": slide.get("slide_height"),
+        "interpretation": (
+            "Coordinates use the same slide space, with x increasing right and y down. "
+            "Text/object list order is not process order. Follow supported arrow endpoints, "
+            "markers and explicit connections when explaining a sequence or branch. "
+            "Start/end markers refer to the first/second endpoint respectively. Geometry "
+            "is context for understanding relationships, not content to read aloud. If "
+            "connections are ambiguous, explain the supported components without inventing "
+            "their order or assigning an unstated function to a tool."
+        ),
+        "shapes": shapes,
+    }
+
+
 def _writing_source(slide: dict) -> str:
     # Preserve complete words across formatting runs; old decks may only have runs.
     paragraphs = [
@@ -208,6 +258,7 @@ def _writing_source(slide: dict) -> str:
             "tables": slide.get("tables", []),
             "charts": slide.get("charts", []),
             "visual_reference": slide.get("img_context", []),
+            "diagram_context": _diagram_context(slide),
         },
         ensure_ascii=False,
     )
@@ -275,7 +326,13 @@ def _in_script(phrase: str, script: str) -> bool:
     )
 
 
-def _analysis_result(result: dict, paragraphs: list[str]) -> dict:
+def _analysis_result(
+    result: dict, paragraphs: list[str], vocabulary_text: list[str] | None = None
+) -> dict:
+    eligible = [_normalized_phrase(text) for text in (vocabulary_text or []) if text.strip()]
+    if not eligible:
+        # Vocabulary coaching is opt-in for human changes, never AI self-review.
+        result = {**result, "vocabulary_upgrades": []}
     try:
         parsed = TranscriptFeedback.model_validate(result)
     except ValidationError as error:
@@ -298,7 +355,9 @@ def _analysis_result(result: dict, paragraphs: list[str]) -> dict:
             "reason": item.reason.strip(),
         }
         for item in parsed.vocabulary_upgrades
-        if item.suggested.strip() and _in_script(_normalized_phrase(item.original), script)
+        if item.suggested.strip()
+        and _in_script(_normalized_phrase(item.original), script)
+        and any(_in_script(_normalized_phrase(item.original), text) for text in eligible)
     ]
     return {
         "complex_terms": terms,
@@ -307,11 +366,33 @@ def _analysis_result(result: dict, paragraphs: list[str]) -> dict:
     }
 
 
-def analyze_script(paragraphs: list[str], source_context: dict | None = None) -> dict:
+def analyze_script(
+    paragraphs: list[str], source_context: dict | None = None,
+    *, vocabulary_text: list[str] | None = None,
+) -> dict:
     """Refresh per-slide feedback after a human save/accept; never rewrite their words."""
+    vocabulary_text = [text for text in (vocabulary_text or []) if text.strip()]
+    vocabulary_rules = (
+        "Suggest vocabulary improvements only for the HUMAN CHANGES below. The rest of "
+        "the transcript is context for tone, meaning and complex terms, not eligible wording. "
+        "Quote original phrases exactly from a single human-change passage. Preserve meaning "
+        "and natural spoken delivery; return an empty array if no useful upgrade is needed."
+        if vocabulary_text else
+        "Do not suggest vocabulary upgrades; return vocabulary_upgrades as an empty array."
+    )
+    feedback_format = {**FEEDBACK_JSON}
+    if vocabulary_text:
+        feedback_format["vocabulary_upgrades"] = [{
+            "original": "exact words from HUMAN CHANGES", "suggested": "replacement",
+            "reason": "why this improves the user's wording",
+        }]
     prompt = f"""Review this existing presentation transcript.
 Return feedback only, without rewriting it.
 {FEEDBACK_INSTRUCTIONS}
+{vocabulary_rules}
+
+HUMAN CHANGES (the only text eligible for vocabulary upgrades):
+{json.dumps(vocabulary_text, ensure_ascii=False)}
 
 TRANSCRIPT:
 {json.dumps(paragraphs, ensure_ascii=False)}
@@ -320,9 +401,9 @@ OPTIONAL CONTEXT:
 {json.dumps(source_context or {}, ensure_ascii=False)}
 
 Return JSON:
-{json.dumps(FEEDBACK_JSON, ensure_ascii=False)}"""
+{json.dumps(feedback_format, ensure_ascii=False)}"""
     result = _request_json(prompt, system_prompt=TRANSCRIPT_SYSTEM_PROMPT)
-    return _analysis_result(result, paragraphs)
+    return _analysis_result(result, paragraphs, vocabulary_text)
 
 
 def generate_script(
@@ -347,22 +428,17 @@ DELIVERY SETTINGS:
 Target tone: {tone}. {TONE_RULES[tone]}
 Style: {style}. {STYLE_RULES[style]}
 Audience level: {audience_level}. {AUDIENCE_RULES[audience_level]}
-Length baseline: {duration_seconds} seconds for a substantive explanation slide, not a
-required duration or word count for every slide. Judge the current slide's purpose and
-amount of meaningful content, using these flexible shares of the baseline:
-- Title/opening: 25–45%.
-- Agenda: 20–35%.
-- Team introduction: 20–40%.
-- Section divider: 10–20%.
-- Main explanation, evidence, or demonstration: 80–100%.
-- Conclusion with substantive takeaways: 40–65%.
-- Simple thank-you or references: 10–20%.
-These are guidelines, not quotas. Judge by the actual content rather than the title or
-position alone; an opening or closing with a substantive argument may deserve more time.
-A longer duration setting means more useful depth where the content supports it, not
-longer greetings, repeated roadmaps, or stretched introductions. Finish once the current
-slide's message is delivered. Do not fill time by repeating points, adding administrative
-commentary, inventing facts, or borrowing explanations from other slides.
+Target speaking duration: approximately {duration_seconds} seconds.
+{DURATION_RULES[duration_seconds]}
+Develop the spoken explanation toward the selected duration at a comfortable speaking
+pace. Apply this duration and depth to slides throughout the presentation, including
+problem statements, solutions, agendas and team introductions. Use as many natural
+paragraphs as the explanation needs.
+Only opening and ending slides have a shorter-length exception: keep a simple title,
+greeting or thank-you brief rather than stretching it to fill the selected duration.
+If an opening or ending contains substantive content, explain that content properly.
+Develop the current slide's ideas rather than filling time with repeated points,
+invented facts or explanations borrowed from other slides.
 
 CURRENT SLIDE (primary source; its text and tables take priority over visual notes):
 {_writing_source(slide)}
@@ -371,6 +447,8 @@ CONTINUITY ONLY (do not write these other slides' transcripts here):
 {json.dumps(continuity, ensure_ascii=False)}
 
 {FEEDBACK_INSTRUCTIONS}
+Do not suggest vocabulary upgrades for your generated wording. Return vocabulary_upgrades
+as an empty array; write the best suitable wording directly into the spoken transcript.
 Return the complete spoken transcript and its feedback together in this JSON:
 {json.dumps({"paragraphs": ["actual spoken paragraph"], **FEEDBACK_JSON}, ensure_ascii=False)}"""
     # One generation request. Optional feedback never triggers a second call or rewrite.

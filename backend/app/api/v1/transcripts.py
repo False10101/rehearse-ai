@@ -2,9 +2,11 @@
 
 import json
 import logging
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -25,6 +27,7 @@ from app.db.models import (
     TranscriptComplexTerm,
     TranscriptParagraph,
     TranscriptRevision,
+    TranscriptVersion,
 )
 from app.db.session import get_db_session, get_session_factory
 from app.services.processing_diagnostics import log_processing_state
@@ -115,6 +118,7 @@ class GenerateSlideRequest(BaseModel):
 
 
 class GenerateAllRequest(BaseModel):
+    replace_existing: bool = False
     duration_seconds: Literal[45, 75, 105] = 75
     tone: Tone = "auto"
     style: Style = "natural"
@@ -169,6 +173,23 @@ class TranscriptHistoryResponse(BaseModel):
     tone: str | None = None
     style: str | None = None
     audience_level: str | None = None
+
+
+class TranscriptVersionResponse(BaseModel):
+    id: uuid.UUID
+    revision: int
+    change_type: str
+    created_at: datetime
+    paragraphs: list[str]
+    settings: dict
+    is_current: bool
+    legacy: bool = False
+    restored_from_id: uuid.UUID | None = None
+
+
+class RestoreVersionRequest(BaseModel):
+    slide_transcript_id: uuid.UUID
+    base_revision: int = Field(ge=1)
 
 
 class SaveParagraph(BaseModel):
@@ -302,12 +323,24 @@ def _response_for_slide(
             .order_by(SlideVocabularyUpgrade.id)
         )
     )
-    latest_revision_source = session.scalar(
-        select(TranscriptRevision.source)
+    latest_revision = session.scalar(
+        select(TranscriptRevision)
         .where(TranscriptRevision.slide_transcript_id == transcript.id)
-        .order_by(TranscriptRevision.created_at.desc())
+        .order_by(TranscriptRevision.created_at.desc(), TranscriptRevision.result_revision.desc())
         .limit(1)
     )
+    latest_revision_source = latest_revision.source if latest_revision else None
+    # Opening the editor must not expose old AI self-review suggestions.
+    vocabulary_changes = []
+    if latest_revision_source == "human-edit":
+        try:
+            saved_edit = json.loads(latest_revision.replacement_text)
+        except (ValueError, TypeError):
+            saved_edit = None
+        if isinstance(saved_edit, dict) and saved_edit.get("format") == "human-edit-v2":
+            vocabulary_changes = saved_edit.get("human_changes", [])
+    if not vocabulary_changes:
+        upgrades = []
     current_mode = (
         "human-enhance" if latest_revision_source in {"human-enhance", "human-edit"} else mode
     )
@@ -370,7 +403,8 @@ def _latest_by_slide(
         select(SlideTranscript, PresentationTranscript.mode)
         .join(PresentationTranscript)
         .where(PresentationTranscript.presentation_id == presentation_id)
-        .order_by(SlideTranscript.updated_at.desc())
+        .order_by(SlideTranscript.revision.desc(), SlideTranscript.updated_at.desc())
+        .execution_options(populate_existing=True)
     ).all()
     transcripts: dict[uuid.UUID, SlideTranscript] = {}
     modes: dict[uuid.UUID, str] = {}
@@ -457,6 +491,65 @@ def export_transcript(
     )
 
 
+def _version_snapshot(session: Session, transcript: SlideTranscript) -> dict:
+    parent = session.get(PresentationTranscript, transcript.presentation_transcript_id)
+    response = _response_for_slide(
+        session, session.get(Slide, transcript.slide_id), transcript, parent.mode,
+        session.get(Presentation, parent.presentation_id),
+    )
+    return {
+        "paragraphs": [p.current for p in response.paragraphs],
+        "mode": response.mode,
+        "settings": {
+            "tone": parent.target_tone, "style": parent.target_style,
+            "audience_level": parent.target_audience_level,
+            "duration_seconds": parent.target_duration_seconds,
+            "model_id": parent.model_id, "prompt_version": parent.prompt_version,
+        },
+        "complex_terms": [term.model_dump() for term in response.complex_terms],
+        "tone_check": response.tone_check.model_dump() if response.tone_check else {},
+    }
+
+
+def _version_id(transcript: SlideTranscript) -> uuid.UUID:
+    # Stable even when an older script is first listed before its baseline is
+    # persisted. A cached history entry must never point at later edited text.
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"rehearse:transcript:{transcript.id}:{transcript.revision}")
+
+
+def _record_version(
+    session: Session, transcript: SlideTranscript, change_type: str,
+    *, settings: dict | None = None, restored_from_id: uuid.UUID | None = None,
+) -> TranscriptVersion:
+    # Flush paragraphs, feedback and edit provenance before taking the snapshot.
+    # Old fragment revisions remain intact but are never used to reconstruct text.
+    session.flush()
+    existing = session.scalar(select(TranscriptVersion).where(
+        TranscriptVersion.slide_transcript_id == transcript.id,
+        TranscriptVersion.revision == transcript.revision,
+    ))
+    if existing:
+        return existing
+    snapshot = _version_snapshot(session, transcript)
+    if settings is not None:
+        snapshot["settings"] = settings
+    version = TranscriptVersion(
+        id=_version_id(transcript), slide_transcript_id=transcript.id, revision=transcript.revision,
+        change_type=change_type, snapshot=json.dumps(snapshot, ensure_ascii=False),
+        restored_from_id=restored_from_id,
+        **({"created_at": transcript.updated_at} if change_type == "saved" else {}),
+    )
+    session.add(version)
+    session.flush()
+    return version
+
+
+def _lock_slide(session: Session, slide: Slide) -> None:
+    # All script writers use the same slide lock, including new generation rows.
+    # A transcript-only lock cannot protect against a simultaneous regeneration.
+    session.refresh(slide, with_for_update=True)
+
+
 def _require_current_transcript(
     session: Session,
     presentation: Presentation,
@@ -464,7 +557,7 @@ def _require_current_transcript(
     transcript_id: uuid.UUID,
     base_revision: int,
 ) -> SlideTranscript:
-    transcript = session.get(SlideTranscript, transcript_id)
+    transcript = session.get(SlideTranscript, transcript_id, populate_existing=True)
     if transcript is None or transcript.slide_id != slide.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcript not found.")
     parent = session.get(PresentationTranscript, transcript.presentation_transcript_id)
@@ -553,6 +646,11 @@ def _save_ai_slide_transcript(
     style: Style,
     audience_level: AudienceLevel,
 ) -> SlideTranscript:
+    _lock_slide(session, slide)
+    latest, _ = _latest_by_slide(session, presentation.id)
+    prior = latest.get(slide.id)
+    if prior:
+        _record_version(session, prior, "saved")
     parent = PresentationTranscript(
         presentation_id=presentation.id,
         mode="ai-gen",
@@ -584,7 +682,8 @@ def _save_ai_slide_transcript(
                 current_text=paragraph,
             )
         )
-    _apply_analysis(session, transcript, result)
+    _apply_analysis(session, transcript, {**result, "vocabulary_upgrades": []})
+    _record_version(session, transcript, "generated")
     return transcript
 
 
@@ -593,6 +692,10 @@ def _create_human_draft(
     presentation: Presentation,
     slide: Slide,
 ) -> SlideTranscript:
+    _lock_slide(session, slide)
+    latest, _ = _latest_by_slide(session, presentation.id)
+    if slide.id in latest:
+        return latest[slide.id]
     parent = PresentationTranscript(
         presentation_id=presentation.id,
         mode="human-write",
@@ -630,6 +733,7 @@ def run_generate_all_transcripts(
     start_slide: int,
     end_slide: int,
     audience_level: AudienceLevel = "general",
+    replace_existing: bool = False,
 ) -> None:
     session = get_session_factory()()
     try:
@@ -664,6 +768,9 @@ def run_generate_all_transcripts(
         # call the provider; SQLAlchemy sessions and ORM objects stay here.
         saved_scripts = []
         written_slide_ids = set()
+        starting_revisions = {
+            slide_id: (script.id, script.revision) for slide_id, script in latest.items()
+        }
         for slide in deck_slides:
             existing = latest.get(slide.id)
             parts = (
@@ -687,7 +794,7 @@ def run_generate_all_transcripts(
         deck_context = [slide.extracted_content for slide in deck_slides]
         tasks = []
         for slide in slides:
-            if slide.id in written_slide_ids:
+            if slide.id in written_slide_ids and not replace_existing:
                 continue
             deck_index = deck_index_by_id[slide.id]
             before = [item for item in saved_scripts if item["slide_number"] < slide.slide_number]
@@ -736,12 +843,18 @@ def run_generate_all_transcripts(
                         # Content may have been written while this request ran.
                         # Recheck before saving so a late result does not replace it.
                         session.expire_all()
+                        slide = session.get(Slide, slide_id)
+                        _lock_slide(session, slide)
                         current, _ = _latest_by_slide(session, presentation_id)
                         existing = current.get(slide_id)
                         has_content = existing is not None and any(
                             p.current_text.strip() for p in _paragraphs(session, existing.id)
                         )
-                        if not has_content:
+                        current_revision = (existing.id, existing.revision) if existing else None
+                        # Explicit replacement covers scripts present when the job
+                        # began, never a newer edit saved while AI was writing.
+                        unchanged = current_revision == starting_revisions.get(slide_id)
+                        if (replace_existing and unchanged) or (not replace_existing and not has_content):
                             with session.begin_nested():
                                 slide = session.get(Slide, slide_id)
                                 _save_ai_slide_transcript(
@@ -920,6 +1033,7 @@ def generate_all_slide_transcripts(
         request.start_slide,
         request.end_slide,
         request.audience_level,
+        request.replace_existing,
     )
     return BulkGenerationResponse(job_id=job.id, status=job.status)
 
@@ -1060,6 +1174,7 @@ def _enhance_transcript_selection(
         )
     # Lock only when writing, after the potentially slow provider call. Refresh
     # catches another tab saving while this request was waiting for the model.
+    _lock_slide(session, slide)
     session.refresh(transcript, with_for_update=True)
     _require_current_transcript(
         session, presentation, slide, request.slide_transcript_id, request.base_revision
@@ -1070,6 +1185,7 @@ def _enhance_transcript_selection(
     if end.id != start.id:
         session.refresh(end)
 
+    _record_version(session, transcript, "saved")
     start_prefix = start.current_text[: request.start.offset]
     end_suffix = end.current_text[request.end.offset :]
     for item in selected_paragraphs:
@@ -1097,7 +1213,7 @@ def _enhance_transcript_selection(
         )
         _clear_analysis(session, transcript)
     else:
-        _apply_analysis(session, transcript, analysis)
+        _apply_analysis(session, transcript, {**analysis, "vocabulary_upgrades": []})
     session.add(
         TranscriptRevision(
             slide_transcript_id=transcript.id,
@@ -1117,8 +1233,28 @@ def _enhance_transcript_selection(
             source="human-enhance",
         )
     )
+    session.flush()
+    settings = _version_snapshot(session, transcript)["settings"]
+    settings.update(tone=request.tone, style=request.style, audience_level=request.audience_level)
+    _record_version(session, transcript, "enhanced", settings=settings)
     session.commit()
     return _response_for_slide(session, slide, transcript, "human-enhance", presentation)
+
+
+def _changed_words(before: str, after: str) -> list[str]:
+    """New/replaced word spans only; surrounding AI text is not human authorship."""
+    old_words = list(re.finditer(r"\S+", before))
+    new_words = list(re.finditer(r"\S+", after))
+    changes = []
+    for operation, _, _, start, end in SequenceMatcher(
+        None, [word.group() for word in old_words],
+        [word.group() for word in new_words], autojunk=False,
+    ).get_opcodes():
+        if operation in {"insert", "replace"} and start < end:
+            text = after[new_words[start].start():new_words[end - 1].end()]
+            if re.search(r"\w", text):
+                changes.append(text)
+    return changes
 
 
 @router.patch("/slides/{slide_number}", response_model=SlideTranscriptResponse)
@@ -1131,11 +1267,13 @@ def save_transcript_script(
 ) -> SlideTranscriptResponse:
     presentation = owned_presentation(session, user.id, presentation_id)
     slide = _slide_for_number(session, presentation, slide_number)
+    _lock_slide(session, slide)
     transcript = _require_current_transcript(
         session, presentation, slide, request.slide_transcript_id, request.base_revision
     )
     paragraphs = _paragraphs(session, transcript.id)
     by_id = {item.id: item for item in paragraphs}
+    before_text = {item.id: item.current_text for item in paragraphs}
     submitted_ids = [item.id for item in request.paragraphs if item.id is not None]
     if len(submitted_ids) != len(set(submitted_ids)):
         raise HTTPException(
@@ -1147,6 +1285,7 @@ def save_transcript_script(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown paragraph."
         )
 
+    _record_version(session, transcript, "saved")
     retained_ids = set(submitted_ids)
     removed_ids = [paragraph.id for paragraph in paragraphs if paragraph.id not in retained_ids]
     for paragraph in paragraphs:
@@ -1154,7 +1293,9 @@ def save_transcript_script(
     session.flush()
 
     saved_paragraphs: list[TranscriptParagraph] = []
+    vocabulary_changes: list[str] = []
     for position, update in enumerate(request.paragraphs, 1):
+        vocabulary_changes.extend(_changed_words(before_text.get(update.id, ""), update.text.strip()))
         paragraph = by_id.get(update.id) if update.id is not None else None
         if paragraph is None:
             paragraph = TranscriptParagraph(
@@ -1201,7 +1342,7 @@ def save_transcript_script(
         _clear_analysis(session, transcript)
     else:
         try:
-            analysis = analyze_script(current)
+            analysis = analyze_script(current, vocabulary_text=vocabulary_changes)
         except Exception:
             logger.exception(
                 "Coaching analysis failed after manual edit for presentation %s slide %s",
@@ -1220,10 +1361,15 @@ def save_transcript_script(
             start_offset=0,
             end_paragraph_id=last.id,
             end_offset=len(last.current_text),
-            replacement_text="\n\n".join(item.text.strip() for item in request.paragraphs),
+            replacement_text=json.dumps({
+                "format": "human-edit-v2",
+                "text": "\n\n".join(item.text.strip() for item in request.paragraphs),
+                "human_changes": vocabulary_changes,
+            }, ensure_ascii=False),
             source="human-edit",
         )
     )
+    _record_version(session, transcript, "edited")
     session.commit()
     return _response_for_slide(session, slide, transcript, "human-enhance", presentation)
 
@@ -1258,3 +1404,93 @@ def transcript_selection_history(
             audience_level=detail.get("audience_level"),
         ))
     return history
+
+
+@router.get("/slides/{slide_number}/versions", response_model=list[TranscriptVersionResponse])
+def transcript_versions(
+    presentation_id: uuid.UUID, slide_number: int,
+    session: Session = Depends(get_db_session), user=Depends(authenticated_user),
+):
+    presentation = owned_presentation(session, user.id, presentation_id)
+    slide = _slide_for_number(session, presentation, slide_number)
+    latest, _ = _latest_by_slide(session, presentation.id)
+    current = latest.get(slide.id)
+    transcripts = list(session.scalars(select(SlideTranscript).where(SlideTranscript.slide_id == slide.id)))
+    rows = list(session.scalars(select(TranscriptVersion).join(SlideTranscript).where(
+        SlideTranscript.slide_id == slide.id,
+    ).order_by(TranscriptVersion.revision.desc(), TranscriptVersion.created_at.desc())))
+    entries = []
+    covered = set()
+    for row in rows:
+        snapshot = json.loads(row.snapshot)
+        covered.add((row.slide_transcript_id, row.revision))
+        entries.append(TranscriptVersionResponse(
+            id=row.id, revision=row.revision, change_type=row.change_type,
+            created_at=row.created_at, paragraphs=snapshot["paragraphs"],
+            settings=snapshot["settings"], restored_from_id=row.restored_from_id,
+            is_current=bool(current and current.id == row.slide_transcript_id and current.revision == row.revision),
+        ))
+    # Pre-feature generation rows retain their last saved full text, not every
+    # historical edit. Expose exactly that, labelled honestly, without GET writes.
+    for transcript in transcripts:
+        if (transcript.id, transcript.revision) in covered:
+            continue
+        snapshot = _version_snapshot(session, transcript)
+        entries.append(TranscriptVersionResponse(
+            id=_version_id(transcript), revision=transcript.revision, change_type="saved",
+            created_at=transcript.updated_at, paragraphs=snapshot["paragraphs"],
+            settings=snapshot["settings"], legacy=True,
+            is_current=bool(current and current.id == transcript.id),
+        ))
+    return sorted(entries, key=lambda entry: entry.revision, reverse=True)
+
+
+@router.post("/slides/{slide_number}/versions/{version_id}/restore", response_model=SlideTranscriptResponse)
+def restore_transcript_version(
+    presentation_id: uuid.UUID, slide_number: int, version_id: uuid.UUID,
+    request: RestoreVersionRequest,
+    session: Session = Depends(get_db_session), user=Depends(authenticated_user),
+):
+    presentation = owned_presentation(session, user.id, presentation_id)
+    slide = _slide_for_number(session, presentation, slide_number)
+    _lock_slide(session, slide)
+    current = _require_current_transcript(
+        session, presentation, slide, request.slide_transcript_id, request.base_revision,
+    )
+    version = session.get(TranscriptVersion, version_id)
+    source = session.get(SlideTranscript, version.slide_transcript_id) if version else next((
+        item for item in session.scalars(select(SlideTranscript).where(SlideTranscript.slide_id == slide.id))
+        if _version_id(item) == version_id
+    ), None)
+    if source is None or source.slide_id != slide.id:
+        raise HTTPException(status_code=404, detail="Version not found.")
+    if version is None:
+        version = _record_version(session, source, "saved")
+    snapshot = json.loads(version.snapshot)
+    if version.slide_transcript_id == current.id and version.revision == current.revision:
+        raise HTTPException(status_code=409, detail="This version is already the current script.")
+    _record_version(session, current, "saved")
+    settings = snapshot["settings"]
+    parent = PresentationTranscript(
+        presentation_id=presentation.id, mode=snapshot["mode"] or "human-write",
+        target_tone=settings.get("tone"), target_style=settings.get("style"),
+        target_audience_level=settings.get("audience_level"),
+        target_duration_seconds=settings.get("duration_seconds"),
+        model_id=settings.get("model_id") or "restored-script",
+        prompt_version=settings.get("prompt_version") or "restored-script-v1", status="completed",
+    )
+    session.add(parent)
+    session.flush()
+    restored = SlideTranscript(
+        presentation_transcript_id=parent.id, slide_id=slide.id, revision=current.revision + 1,
+    )
+    session.add(restored)
+    session.flush()
+    for position, text in enumerate(snapshot["paragraphs"] or [""], 1):
+        session.add(TranscriptParagraph(slide_transcript_id=restored.id, position=position, current_text=text))
+    # The exact same text has its matching saved feedback. Restoration does not
+    # call the provider or invent fresh vocabulary recommendations.
+    _apply_analysis(session, restored, snapshot)
+    _record_version(session, restored, "restored", settings=settings, restored_from_id=version.id)
+    session.commit()
+    return _response_for_slide(session, slide, restored, parent.mode, presentation)

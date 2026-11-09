@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/lib/live-observation.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/live-observation.test.ts src/lib/transcript-highlights.test.ts"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.16.1",

@@ -37,7 +37,12 @@ def test_all_generation_settings_use_one_response_for_speech_and_feedback(
     assert len(calls) == 1
     assert result == response
     assert "exact words the presenter will say aloud" in calls[0]
-    assert f"Length baseline: {duration} seconds" in calls[0]
+    assert f"Target speaking duration: approximately {duration} seconds" in calls[0]
+    assert transcript_enhancer.DURATION_RULES[duration] in calls[0]
+    assert "Only opening and ending slides have a shorter-length exception" in calls[0]
+    assert "problem statements, solutions, agendas and team introductions" in calls[0]
+    assert "shares of the baseline" not in calls[0]
+    assert "Finish once" not in calls[0]
     assert transcript_enhancer.TONE_RULES[tone] in calls[0]
     assert transcript_enhancer.STYLE_RULES[style] in calls[0]
     assert transcript_enhancer.AUDIENCE_RULES[audience] in calls[0]
@@ -180,7 +185,7 @@ def test_feedback_has_no_content_blacklist_acronym_placeholders_or_caps(monkeypa
         for t in terms[:4]
     ]
     monkeypatch.setattr(transcript_enhancer, "_request_json", lambda *a, **k: response)
-    result = transcript_enhancer.analyze_script(speech)
+    result = transcript_enhancer.analyze_script(speech, vocabulary_text=speech)
     assert [t["term"] for t in result["complex_terms"]] == terms
     assert len(result["vocabulary_upgrades"]) == 4
     response["complex_terms"] = []
@@ -208,7 +213,7 @@ def test_feedback_only_filters_quotes_that_are_absent_not_words_it_dislikes(monk
         {"original": "unspoken words", "suggested": "other words", "reason": "Not in the script."},
     ]
     monkeypatch.setattr(transcript_enhancer, "_request_json", lambda *a, **k: response)
-    result = transcript_enhancer.analyze_script(speech)
+    result = transcript_enhancer.analyze_script(speech, vocabulary_text=speech)
     assert [t["term"] for t in result["complex_terms"]] == ["SME"]
     assert len(result["vocabulary_upgrades"]) == 1
     assert result["vocabulary_upgrades"][0]["suggested"] == "early finding"
@@ -514,3 +519,96 @@ def test_cut_off_json_logs_finish_reason_and_token_usage(caplog):
     assert "finish_reason='length'" in caplog.text
     assert "completion_tokens" in caplog.text
     assert "unfinished" in caplog.text
+
+
+def test_diagram_context_keeps_transformed_arrows_groups_and_connections_without_xml():
+    slide = {
+        "slide_width": 1000, "slide_height": 600,
+        "paragraphs": [{"text": "Later step"}, {"text": "Earlier step"}],
+        "shape_evidence": [
+            {"shape_id": 2, "text": "Later step", "left": 700, "top": 100,
+             "width": 180, "height": 90, "geometry": "rect", "parent_group_ids": [9]},
+            {"shape_id": 1, "text": "Earlier step", "left": 100, "top": 100},
+            {"shape_id": 3, "geometry": "line", "rotation": 180,
+             "slide_corners": [[690, 145], [290, 145], [290, 145], [690, 145]],
+             "line": {"slide_endpoints": [[690, 145], [290, 145]],
+                      "head_end": {"type": "triangle"}, "tail_end": {"type": "none"},
+                      "explicit_connections": [{"id": "1", "idx": "0"}],
+                      "explicit_style_xml": "DO_NOT_SEND_LINE_XML"},
+             "custom_geometry_xml": "DO_NOT_SEND_CUSTOM_XML"},
+        ],
+    }
+    raw = transcript_enhancer._writing_source(slide)
+    data = json.loads(raw)
+    assert data["text_content"] == ["Later step", "Earlier step"]
+    diagram = data["diagram_context"]
+    assert diagram["slide_width"] == 1000 and diagram["slide_height"] == 600
+    assert diagram["shapes"][0]["parent_group_ids"] == [9]
+    assert diagram["shapes"][0]["bounds"]["left"] == 700
+    arrow = diagram["shapes"][2]
+    assert arrow["line"] == {
+        "slide_endpoints": [[690, 145], [290, 145]],
+        "start_marker": "triangle", "end_marker": "none",
+        "explicit_connections": [{"id": "1", "idx": "0"}],
+    }
+    assert arrow["rotation"] == 180
+    assert arrow["slide_corners"] == slide["shape_evidence"][2]["slide_corners"]
+    assert "DO_NOT_SEND" not in raw
+    assert "not process order" in diagram["interpretation"]
+
+
+def test_old_slide_without_geometry_keeps_its_source_text():
+    data = json.loads(transcript_enhancer._writing_source({"text": [{"t": "Existing text"}]}))
+    assert data["text_content"] == ["Existing text"]
+    assert data["diagram_context"] == {}
+
+
+def test_generation_and_enhancement_receive_current_diagram_evidence(monkeypatch):
+    calls = []
+    slide = {"shape_evidence": [{"shape_id": 81, "text": "Process node", "left": 37}]}
+    def request(prompt, **kwargs):
+        calls.append(prompt)
+        return _generation_response(["Spoken explanation."]) if len(calls) == 1 else {
+            "replacement_paragraphs": ["Improved explanation."]
+        }
+    monkeypatch.setattr(transcript_enhancer, "_request_json", request)
+    transcript_enhancer.generate_script(slide, 105, "informative", "natural")
+    transcript_enhancer.enhance_selection(slide, ["Original explanation."], "informative", "natural")
+    assert len(calls) == 2
+    for prompt in calls:
+        assert '"id": 81' in prompt and '"left": 37' in prompt
+        assert "without inventing their order" in prompt
+    assert "repeating it in a closing recap" in calls[0]
+    assert transcript_enhancer.DURATION_RULES[105] in calls[0]
+
+
+def test_generated_feedback_never_reviews_its_own_vocabulary(monkeypatch):
+    response = _generation_response(["An SME has a weak process."])
+    response["complex_terms"] = [{"term": "SME", "definition": "Small enterprise.", "pronunciation": "S M E"}]
+    response["vocabulary_upgrades"] = [{"original": "weak", "suggested": "ineffective", "reason": "More precise."}]
+    prompts = []
+    monkeypatch.setattr(transcript_enhancer, "_request_json", lambda prompt, **kw: prompts.append(prompt) or response)
+    result = transcript_enhancer.generate_script({}, 75, "informative", "natural")
+    assert result["vocabulary_upgrades"] == []
+    assert result["complex_terms"][0]["term"] == "SME"
+    assert '"vocabulary_upgrades": []' in prompts[0]
+    assert "Do not suggest vocabulary upgrades for your generated wording" in prompts[0]
+
+
+def test_manual_vocabulary_is_limited_to_human_changes_but_terms_use_full_script(monkeypatch):
+    speech = ["The SME operates efficiently. My draft is kinda messy."]
+    response = _generation_response(speech)
+    response["complex_terms"] = [{"term": "SME", "definition": "Small enterprise.", "pronunciation": "S M E"}]
+    response["vocabulary_upgrades"] = [
+        {"original": "operates efficiently", "suggested": "performs effectively", "reason": "Untouched AI words."},
+        {"original": "kinda messy", "suggested": "unclear", "reason": "More precise."},
+        {"original": "draft is kinda", "suggested": "draft seems", "reason": "Crosses author boundary."},
+    ]
+    prompts = []
+    monkeypatch.setattr(transcript_enhancer, "_request_json", lambda prompt, **kw: prompts.append(prompt) or response)
+    result = transcript_enhancer.analyze_script(speech, vocabulary_text=["kinda messy."])
+    assert [x["original"] for x in result["vocabulary_upgrades"]] == ["kinda messy"]
+    assert result["complex_terms"][0]["term"] == "SME"
+    assert "HUMAN CHANGES (the only text eligible" in prompts[0]
+    assert speech == ["The SME operates efficiently. My draft is kinda messy."]
+    assert transcript_enhancer.analyze_script(speech)["vocabulary_upgrades"] == []

@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Keep dropdown arrows centered and inset consistently across browsers. */
+.transcript-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a8394' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px 16px;
+  padding-right: 2.5rem;
+}
+
+::highlight(script-terms) {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: #b7a8d0;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+::highlight(script-vocabulary) {
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: #cfb36e;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}

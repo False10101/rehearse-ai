@@ -252,6 +252,27 @@ class TranscriptRevision(Base):
     )
 
 
+class TranscriptVersion(Base):
+    """Immutable whole-script snapshot, independent of mutable paragraph IDs."""
+
+    __tablename__ = "transcript_versions"
+    __table_args__ = (
+        UniqueConstraint("slide_transcript_id", "revision", name="uq_transcript_version_revision"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    slide_transcript_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("slide_transcripts.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    restored_from_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class UploadPracticeSession(TimestampedModel, Base):
     __tablename__ = "upload_practice_sessions"
 
