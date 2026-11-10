@@ -1,5 +1,7 @@
 "use client";
 
+import "./transcript-dialogs.css";
+
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
@@ -24,8 +26,8 @@ export function TranscriptBulkDrawer({ slides, range, replaceExisting, settings,
     return () => { document.body.style.overflow = overflow; previous?.focus({ preventScroll: true }); };
   }, []);
   if (typeof document === "undefined") return null;
-  return createPortal(<div className="fixed inset-0 z-[90] flex justify-end bg-[#191724]/45 font-sans text-[#302b3b] backdrop-blur-[4px]">
-    <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="bulk-setup-title" className="flex h-dvh w-full max-w-[460px] flex-col border-l border-white/70 bg-white shadow-[-16px_0_70px_-20px_rgba(25,20,50,0.3)]" onKeyDown={(event) => {
+  return createPortal(<div className="transcript-dialog-overlay transcript-bulk-overlay fixed inset-0 z-[90] flex justify-end bg-[#191724]/45 font-sans text-[#302b3b] backdrop-blur-[4px]">
+    <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="bulk-setup-title" className="transcript-dialog transcript-bulk-dialog flex h-dvh w-full max-w-[460px] flex-col border-l border-white/70 bg-white shadow-[-16px_0_70px_-20px_rgba(25,20,50,0.3)]" onKeyDown={(event) => {
       if (event.key === "Escape" && !busy) { event.preventDefault(); onClose(); }
       if (event.key !== "Tab") return;
       const controls = Array.from(dialog.current?.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled), input:not(:disabled)") ?? []);
@@ -37,7 +39,7 @@ export function TranscriptBulkDrawer({ slides, range, replaceExisting, settings,
         <div><h2 id="bulk-setup-title" className="m-0 text-xl font-semibold tracking-tight">Generate slide scripts</h2><p className="mb-0 mt-2 text-sm leading-6 text-[#8a8394]">Choose your slides and what to keep.</p></div>
         <button ref={close} type="button" disabled={busy} onClick={onClose} aria-label="Close generation settings" className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#8b8595] hover:bg-[#f3f1f8] disabled:opacity-40 ${focus}`}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+      <div className="transcript-bulk-content min-h-0 flex-1 overflow-y-auto px-7 py-6">
         <div className="mb-3 flex items-center justify-between"><h3 className="m-0 text-sm font-semibold">Slide range</h3><button type="button" disabled={busy} onClick={() => onRange({ start: slides[0].slide_number, end: slides[slides.length - 1].slide_number })} className={`rounded text-xs font-medium text-[#7359d6] hover:text-[#5038b5] ${focus}`}>Select all slides</button></div>
         <div className="grid grid-cols-2 gap-3">
           <label className="grid gap-2 text-xs text-[#8a8394]">From<select disabled={busy} value={range.start} onChange={(event) => { const start = Number(event.target.value); onRange({ start, end: Math.max(start, range.end) }); }} className={`transcript-select h-11 rounded-lg border border-[#e4dfea] bg-white px-3 text-sm font-medium text-[#62596e] ${focus}`}>{slides.map((slide) => <option key={slide.slide_number} value={slide.slide_number}>Slide {slide.slide_number}</option>)}</select></label>
@@ -45,7 +47,7 @@ export function TranscriptBulkDrawer({ slides, range, replaceExisting, settings,
         </div>
         <section className="mt-7 border-t border-[#eeecf2] pt-6">
           <h3 className="mb-3 mt-0 text-sm font-semibold">Existing scripts</h3>
-          <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${replaceExisting ? "border-[#dcd3f7] bg-[#faf8ff]" : "border-[#e8e3ee] bg-[#faf9fc]"}`}>
+          <label className={`transcript-replace-option flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${replaceExisting ? "border-[#dcd3f7] bg-[#faf8ff]" : "border-[#e8e3ee] bg-[#faf9fc]"}`}>
             <input type="checkbox" disabled={busy} checked={replaceExisting} onChange={(event) => onReplaceExisting(event.target.checked)} className={`mt-0.5 h-4 w-4 shrink-0 accent-[#6850db] ${focus}`} />
             <span><span className="block text-[0.8125rem] font-semibold leading-5">Include slides that already have a script</span><span className="mt-1.5 block text-xs leading-5 text-[#8a8394]">Replace AI-generated and manually written scripts in this range. Their saved versions stay in Version history.</span></span>
           </label>

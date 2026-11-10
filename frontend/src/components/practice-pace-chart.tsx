@@ -26,51 +26,52 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
   const selected = events[selectedIndex] ?? events[0];
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const inspected = hoverIndex === null ? null : samples[hoverIndex];
-  const w = 1100, h = 290, left = 52, right = 26, top = 25, bottom = 42;
+  const w = 1100, h = 250, left = 52, right = 26, top = 22, bottom = 42;
   const end = Math.max(duration, ...samples.map(s => s.end_seconds), 1);
   const maximum = Math.max(240, Math.ceil(Math.max(...samples.map(s => s.words_per_minute), 0) / 60) * 60);
   const x = (t: number) => left + t / end * (w - left - right);
   const y = (v: number) => top + (1 - v / maximum) * (h - top - bottom);
-  const color = (type: string) => type === "fast" ? "#db6b47" : type === "slow" ? "#4d83ba" : "#8170cc";
+  const color = (type: string) => type === "fast" ? "#bd432b" : type === "slow" ? "#2866a4" : "#67528e";
   const moment = selected && moments.find(m => m.kind === selected.type
     && Math.abs(m.event_start_seconds - selected.start_seconds) < 0.1);
 
-  return <section className="practice-panel" aria-labelledby="pace-heading">
+  return <section className="practice-panel practice-pace-panel" aria-labelledby="pace-heading">
     <div className="practice-panel-heading">
-      <div><p className="practice-eyebrow">Speech delivery</p><h2 id="pace-heading">Where your pace changes</h2>
-        <p className="practice-muted">All faster and slower passages are highlighted. Choose a passage below to hear it and see specific feedback.</p></div>
-      <span className="practice-count">{events.length} intervals to review</span>
+      <div><p className="practice-eyebrow">Speaking pace</p><h2 id="pace-heading">Find a pace your audience can follow</h2>
+        <p className="practice-muted">See where your delivery changes, then listen to a passage and practise the suggested adjustment.</p></div>
+      <span className="practice-count">{events.length} {events.length === 1 ? "passage" : "passages"} to review</span>
     </div>
     {samples.length ? <>
-      <div className="practice-chart-key">
-        <span><i style={{ background: "#db6b47" }} />Faster passage · above reference or your usual pace</span>
-        <span><i style={{ background: "#4d83ba" }} />Slower passage · may be intentional</span>
-        <span><i style={{ background: "#8170cc" }} />No pronounced pace change</span>
-      </div>
+      <div className="practice-pace-overview">
+      <div className="practice-pace-chart-heading"><h3>Pace across your recording</h3><div className="practice-chart-key">
+        <span><i style={{ background: "#51416f" }} />Measured pace</span>
+        <span><i style={{ background: "#bd432b" }} />Faster passage</span>
+        <span><i style={{ background: "#2866a4" }} />Slower passage</span>
+      </div></div>
       <div className="practice-chart-scroll">
-        <svg className="practice-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Speaking pace estimates. Orange and blue mark faster and slower passages to review, not confirmed delivery mistakes."
+        <svg className="practice-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Speaking pace estimates. The dark line shows measured words per minute. Orange and blue points and shading mark faster and slower passages to review."
           onMouseLeave={() => setHoverIndex(null)}>
-          <rect x={left} y={y(180)} width={w-left-right} height={y(100)-y(180)} fill="#f4f2fb" />
+
           {events.map((event, index) => <g key={`${event.type}-${event.start_seconds}`}>
             <rect x={x(event.start_seconds)} y={top} width={Math.max(1, x(event.end_seconds)-x(event.start_seconds))} height={h-top-bottom}
-              fill={color(event.type)} opacity={index === selectedIndex ? ".23" : ".10"}
+              fill={event.type === "fast" ? "#e37866" : "#6e9fd1"} fillOpacity={index === selectedIndex ? .28 : .18}
               onClick={() => setSelectedIndex(index)} style={{ cursor: "pointer" }} />
-            <rect x={x(event.start_seconds)} y={top} width={Math.max(1, x(event.end_seconds)-x(event.start_seconds))} height="4" fill={color(event.type)} />
+
           </g>)}
-          {[0, 100, 180, maximum].map(value => <g key={value}>
-            <line x1={left} x2={w-right} y1={y(value)} y2={y(value)} stroke="#dedce7" strokeDasharray={value === 100 || value === 180 ? "5 5" : undefined} />
+          {Array.from({ length: 5 }, (_, i) => maximum * i / 4).map(value => <g key={value}>
+            <line x1={left} x2={w-right} y1={y(value)} y2={y(value)} stroke="#c8c4d0" strokeWidth="1" pointerEvents="none" />
             <text x={left-10} y={y(value)+4} textAnchor="end" fill="#777180" fontSize="12">{value}</text>
           </g>)}
           <text x={left} y="13" fill="#777180" fontSize="11">WORDS / MIN</text>
           {samples.slice(1).map((sample, i) => {
             const previous = samples[i];
             if (sample.timestamp_seconds - previous.timestamp_seconds > 5.1) return null;
-            return <line key={sample.timestamp_seconds} x1={x(previous.timestamp_seconds)} x2={x(sample.timestamp_seconds)} y1={y(previous.words_per_minute)} y2={y(sample.words_per_minute)} stroke={color(sample.type)} strokeWidth="3" strokeLinecap="round" />;
+            return <line key={sample.timestamp_seconds} x1={x(previous.timestamp_seconds)} x2={x(sample.timestamp_seconds)} y1={y(previous.words_per_minute)} y2={y(sample.words_per_minute)} stroke="#51416f" strokeWidth="2.5" strokeLinecap="round" />;
           })}
           {samples.map((sample, i) => <g key={sample.timestamp_seconds}>
-            <circle cx={x(sample.timestamp_seconds)} cy={y(sample.words_per_minute)} r={hoverIndex === i ? 5 : 2.5} fill={color(sample.type)} />
+            <circle cx={x(sample.timestamp_seconds)} cy={y(sample.words_per_minute)} r={hoverIndex === i ? 4 : 2.8} fill={color(sample.type)} stroke="white" strokeWidth="1.2" />
             <rect x={x(sample.timestamp_seconds)-Math.max(4,(w-left-right)*2.5/end)} y={top} width={Math.max(8,(w-left-right)*5/end)} height={h-top-bottom}
-              fill="transparent" onMouseEnter={() => setHoverIndex(i)} onClick={() => {
+              fill="transparent" style={{ cursor: events.some(event => sample.timestamp_seconds >= event.start_seconds && sample.timestamp_seconds <= event.end_seconds) ? "pointer" : "crosshair" }} onMouseEnter={() => setHoverIndex(i)} onClick={() => {
                 setHoverIndex(i);
                 const index = events.findIndex(event => sample.timestamp_seconds >= event.start_seconds && sample.timestamp_seconds <= event.end_seconds);
                 if (index >= 0) setSelectedIndex(index);
@@ -84,23 +85,24 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
       </div>
       <div className="practice-chart-caption" aria-live="polite">
         {inspected ? <strong>{time(inspected.start_seconds)}–{time(inspected.end_seconds)} · {Math.round(inspected.words_per_minute)} WPM over 15 seconds</strong>
-          : <span>15-second averages, sampled every 5 seconds. No estimate is made from the final partial window.</span>}
-        <span>Timing is estimated from speech transcription.</span>
+          : <span>Hover over the line to inspect a passage. Click an orange or blue point to review that passage below.</span>}
+        <span>Estimated words per minute.</span>
+      </div>
       </div>
     </> : <p className="practice-empty">This recording has no complete pace timeline. A new analysis is needed to draw the chart; any saved intervals remain below.</p>}
     {events.length ? <div className="practice-pace-details">
-      <div><p className="practice-eyebrow">Choose a moment</p>
+      <div className="practice-pace-picker"><p className="practice-eyebrow">Choose a passage to practise</p>
         <div className="practice-intervals">{events.map((event, i) =>
           <button type="button" className={i === selectedIndex ? "is-selected" : ""} aria-pressed={i === selectedIndex} key={`${event.start_seconds}-${i}`} onClick={() => setSelectedIndex(i)}>
             <i style={{ background: color(event.type) }} /><span>{time(event.start_seconds)}–{time(event.end_seconds)}</span>
-            <small>{event.type === "fast" ? "Fast" : "Slow"}</small>
+            <small>{event.type === "fast" ? "Faster" : "Slower"}</small>
           </button>)}</div>
       </div>
-      {selected && <div className="practice-selected" aria-live="polite">
-        <div className="practice-selected-title"><h3>{selected.type === "fast" ? "Review this faster passage" : "Review this slower passage or pause"}</h3><span>{Math.round(selected.words_per_minute)} WPM*</span></div>
-        {moment ? <PracticeSpeechMoment key={moment.id} moment={moment} accessToken={accessToken} />
+      {selected && <div className="practice-selected practice-pace-review" aria-live="polite">
+        <div className="practice-selected-title"><div><p className={`practice-pace-review-label ${selected.type}`}>{selected.type === "fast" ? "Faster passage" : "Slower passage"} · {time(selected.start_seconds)}–{time(selected.end_seconds)}</p><h3>Listen, then try the adjustment</h3></div><span className="practice-pace-estimate"><span>Estimated pace</span>{Math.round(selected.words_per_minute)} words/min</span></div>
+        {moment ? <PracticeSpeechMoment key={moment.id} moment={moment} accessToken={accessToken} presentation="review" />
           : <p>The excerpt for this interval is missing from this saved report. Analyze the recording again to retain it.</p>}
-        <small>*Average of overlapping pace measurements in the selected interval. A slow interval alone does not prove a mistake.</small>
+        <p className="practice-pace-review-note">Pace is estimated over 15-second speech windows. Listen to the excerpt before deciding whether to change your delivery.</p>
       </div>}
     </div> : samples.length ? <p className="practice-empty">No measured interval crossed the fast or slow review thresholds.</p> : null}
   </section>;

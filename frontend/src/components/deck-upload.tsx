@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import "./deck-upload.css";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useAuth } from "./auth/auth-provider";
@@ -24,15 +25,30 @@ export function DeckUpload({ mode }: { mode: "slide" | "transcript" }) {
     } catch (error) { setError(error instanceof Error ? error.message : "Upload failed."); setBusy(false); }
     finally { if (input.current) input.current.value = ""; }
   }
-  return <main className="min-h-dvh bg-[#f8f8fb] text-[#242132]">
-    <nav className="flex items-center justify-between border-b border-[#e8e6ee] bg-white px-8 py-5"><Brand /><Link href="/home" className="text-sm text-[#797383]">← Workspace</Link></nav>
-    <section className="mx-auto max-w-2xl px-6 py-16"><p className="text-xs font-semibold uppercase tracking-widest text-[#7660df]">{mode === "slide" ? "Slide Analyzer" : "Transcript Enhancer"}</p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">{mode === "slide" ? "Give your slides a second look." : "Find the words for your slides."}</h1>
-      <p className="mt-4 text-sm leading-6 text-[#797383]">{mode === "slide" ? "Upload your deck for slide feedback, visual review, and a presentation summary." : "Upload your deck to write or generate an editable presenter script. Slide analysis is not required."}</p>
-      <div className="mt-8 rounded-2xl border border-dashed border-[#cdc5df] bg-white p-10 text-center"><h2 className="font-semibold">Choose your presentation</h2><p className="mt-2 text-xs text-[#797383]">PowerPoint · .pptx · up to 30 MB</p>
-        <input ref={input} type="file" accept=".pptx" className="hidden" onChange={e => { const file = e.target.files?.[0]; if (file) void upload(file); }} />
-        <button type="button" disabled={busy} onClick={() => input.current?.click()} className="mt-6 rounded-xl bg-[#242132] px-6 py-3 text-sm font-semibold text-white disabled:opacity-60">{busy ? "Uploading presentation…" : "Choose PowerPoint"}</button>
-        {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
-      </div><p className="mt-5 text-xs text-[#797383]">Existing decks are available in your workspace’s Recent work.</p>
-    </section></main>;
+  return <main className="deck-upload">
+    <nav className="deck-upload-nav"><Link href="/home" aria-label="Rehearse AI home"><Brand /></Link><Link href="/home">← Workspace</Link></nav>
+    <div className="deck-upload-content">
+      <header><p className="deck-upload-kicker">{mode === "slide" ? "Slide Analyzer" : "Transcript Enhancer"}</p><h1>{mode === "slide" ? "A clearer deck starts here." : "Find the words for your slides."}</h1><p>{mode === "slide" ? "Review your content and visual design, with practical feedback for every slide." : "Turn your slides into a spoken script, or bring your own words and refine them."}</p></header>
+      <div className="deck-upload-grid">
+        <section className="deck-upload-picker" aria-busy={busy}>
+          <span className="deck-upload-symbol" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="7" y="7" width="34" height="25" rx="3"/><path d="M24 32v9m-8 0h16M15 16h18M15 22h11"/></svg></span>
+          <h2>Choose your presentation</h2><p>Upload a PowerPoint deck to get started.</p>
+          <input ref={input} type="file" accept=".pptx" aria-label="Choose a PowerPoint presentation" className="hidden" onChange={e => { const file = e.target.files?.[0]; if (file) void upload(file); }} />
+          <button type="button" disabled={busy} onClick={() => input.current?.click()}>{busy ? "Uploading presentation…" : "Choose PowerPoint"}<span aria-hidden="true">↑</span></button>
+          <small>PowerPoint (.pptx) · Up to 30 MB</small>
+          {error && <p role="alert" className="deck-upload-error">{error}</p>}
+        </section>
+        <aside className="deck-upload-guide"><h2>What you’ll get</h2>{(mode === "slide" ? [
+          ["01", "Feedback for each slide", "Find unclear wording, dense content, and opportunities to sharpen your message."],
+          ["02", "A visual design review", "Review readability, contrast, layout, and consistency across your deck."],
+          ["03", "A plan for your next edit", "See improvement priorities alongside your slides, plus a summary of the deck."],
+        ] : [
+          ["01", "A script for your audience", "Generate scripts for one slide or a selected range, with your choice of tone, style, audience, and length."],
+          ["02", "Room for your own voice", "Write and edit directly, or select a passage to enhance. Compare the suggestion before accepting it."],
+          ["03", "Your work, kept together", "Return to earlier script versions and export your saved presentation script."],
+        ]).map(([number, title, description]) => <div key={number}><span>{number}</span><section><h3>{title}</h3><p>{description}</p></section></div>)}</aside>
+      </div>
+      <footer>Returning to a deck? <Link href="/home">Find it in your workspace →</Link></footer>
+    </div>
+  </main>;
 }

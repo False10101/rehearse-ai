@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import "./home.css";
+
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/auth-provider";
@@ -101,7 +103,7 @@ export default function WorkspaceHomePage() {
     presentation.original_filename.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const focusStyle = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7661ef] focus-visible:ring-offset-2";
-  const featureStyle = `group flex h-full flex-col rounded-2xl border border-[#e4e1ed] bg-white p-5 text-left no-underline shadow-[0_2px_5px_rgba(32,24,60,0.025)] transition duration-200 hover:border-[#bfb4ef] hover:shadow-[0_8px_24px_rgba(55,39,110,0.07)] ${focusStyle}`;
+  const featureStyle = "home-tool";
   const features = [
     { name: "Slide Analyzer", icon: "slides" as const, description: "Find what works in your deck and what needs a second look.", action: "Analyze a deck", href: "/slide" },
     { name: "Transcript Enhancer", icon: "script" as const, description: "Turn your slides into a script that sounds like you.", action: "Work on your script", href: "/transcript" },
@@ -110,8 +112,8 @@ export default function WorkspaceHomePage() {
   ];
 
   return (
-    <main className="flex h-dvh flex-col overflow-hidden bg-[#f8f8fb] text-[#242132]">
-      <nav className="flex h-[4.5rem] flex-none items-center justify-between border-b border-[#e8e6ee] bg-white px-[clamp(1.25rem,4vw,4.5rem)]" aria-label="Workspace navigation">
+    <main className="home-workspace">
+      <nav className="home-nav" aria-label="Workspace navigation">
         <div className="flex items-center gap-7">
           <Link className={`rounded-lg no-underline ${focusStyle}`} href="/home"><Brand /></Link>
           <span className="hidden border-l border-[#e6e3ed] pl-7 text-sm font-medium text-[#797383] sm:block">Workspace</span>
@@ -121,33 +123,31 @@ export default function WorkspaceHomePage() {
         </button>
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-[clamp(1.25rem,4vw,4.5rem)] py-7 xl:overflow-hidden">
-        <div className="mx-auto flex min-h-full max-w-[88rem] flex-col xl:h-full xl:min-h-0">
-          <header className="mb-7 flex flex-none flex-wrap items-center justify-between gap-4">
+      <div className="home-scroll">
+        <div className="home-content">
+          <header className="home-intro">
             <div>
-              <h1 className="m-0 text-[clamp(1.65rem,2.5vw,2.25rem)] font-semibold leading-tight tracking-[-0.045em]">Make your next presentation count.</h1>
-              <p className="mb-0 mt-2 text-[13px] leading-5 text-[#7a7485]">Refine your slides, find your words, and practice your delivery.</p>
+              <p className="home-kicker">Your workspace</p><h1>Ready for your next presentation.</h1>
+              <p className="home-intro-description">Refine your slides, find your words, and practice your delivery.</p>
             </div>
-            <div className="flex items-center gap-2 text-xs text-[#8b8496]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#9b87ee]" /> Your personal workspace
-            </div>
+            <div className="home-workspace-note"><span>Prepare. Practise. Improve.</span><span>Everything for your next presentation, in one place.</span></div>
           </header>
 
 
-          <section className="flex-none" aria-labelledby="features-title">
+          <section className="home-tools" aria-labelledby="features-title">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="m-0 text-sm font-semibold text-[#575063]" id="features-title">Start something new</h2>
               <span className="hidden text-xs text-[#8b8496] sm:block">Four ways to prepare</span>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="home-tool-grid">
               {features.map((feature) => {
                 const content = <>
                   <div className="flex items-center justify-between">
-                    <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#f2eeff] text-[#765de0]"><WorkspaceIcon kind={feature.icon} /></span>
+                    <span className="home-tool-icon"><WorkspaceIcon kind={feature.icon} /></span>
                   </div>
-                  <h3 className="mb-0 mt-4 text-[15px] font-semibold tracking-[-0.025em]">{feature.name}</h3>
-                  <p className="mb-0 mt-2 flex-1 text-xs leading-[1.65] text-[#7c7587]">{feature.description}</p>
-                  <span className="mt-5 inline-flex items-center gap-2 text-xs font-semibold text-[#7056d8]">
+                  <h3 className="home-tool-title">{feature.name}</h3>
+                  <p className="home-tool-description">{feature.description}</p>
+                  <span className="home-tool-action">
                     {feature.action}<ArrowIcon />
                   </span>
                 </>;
@@ -156,8 +156,8 @@ export default function WorkspaceHomePage() {
             </div>
           </section>
 
-          <section className="mt-7 flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-2xl border border-[#e4e1eb] bg-white xl:min-h-0" aria-labelledby="recent-title">
-            <div className="flex flex-none flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-6">
+          <section className="home-library" aria-labelledby="recent-title">
+            <div className="home-library-toolbar">
               <div>
                 <div className="flex items-center gap-2.5">
                   <h2 className="m-0 text-[15px] font-semibold tracking-[-0.02em]" id="recent-title">Recent work</h2>
@@ -165,17 +165,17 @@ export default function WorkspaceHomePage() {
                 </div>
                 <p className="mb-0 mt-1 text-xs text-[#8a8296]">Pick up where you left off.</p>
               </div>
-              <label className="flex w-full items-center gap-2 rounded-lg border border-[#e7e3ee] bg-[#fcfbfe] px-3 text-[#9b92a7] focus-within:border-[#a28ce9] focus-within:ring-2 focus-within:ring-[#eee8ff] sm:w-60">
+              <label className="home-search">
                 <WorkspaceIcon kind="search" />
                 <input aria-label="Search recent work" className="min-w-0 flex-1 border-0 bg-transparent py-2 text-xs text-[#47404f] outline-none placeholder:text-[#a29aaa]" placeholder="Search recent work…" value={search} onChange={(event) => setSearch(event.target.value)} type="search" />
               </label>
             </div>
 
-            <div className="hidden flex-none grid-cols-[minmax(0,1fr)_8rem_9rem_10.5rem] gap-4 border-y border-[#eeeaf3] bg-[#fbfafc] px-6 py-2.5 text-[11px] font-medium text-[#978da3] md:grid">
+            <div className="home-table-heading">
               <span>Presentation / recording</span><span>Status</span><span>Added</span><span className="text-right">Open in</span>
             </div>
             {refreshError && <p role="status" className="m-0 border-b border-[#eeeaf3] px-6 py-2 text-xs text-[#a76510]">Status refresh failed. Your last loaded work is shown; retrying automatically.</p>}
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="home-library-scroll">
               {loadingPresentations ? (
                 <div className="space-y-5 px-6 py-6" role="status" aria-label="Loading presentations">
                   {[0, 1, 2].map((item) => <div className="flex animate-pulse items-center gap-4 motion-reduce:animate-none" key={item}><span className="h-11 w-11 rounded-xl bg-[#f0edf5]" /><div className="flex-1 space-y-2"><div className="h-3 w-2/5 rounded bg-[#f0edf5]" /><div className="h-2 w-1/5 rounded bg-[#f5f3f8]" /></div></div>)}
@@ -201,9 +201,9 @@ export default function WorkspaceHomePage() {
                   {filteredPresentations.map((presentation) => {
                     const status = statusStyle(presentation.status);
                     return (
-                      <li className="grid items-center gap-3 px-5 py-4 transition hover:bg-[#fdfcfe] sm:grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_8rem_9rem_10.5rem] md:gap-4 md:px-6" key={`${presentation.kind}-${presentation.id}`}>
+                      <li className="home-work-row" key={`${presentation.kind}-${presentation.id}`}>
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-11 w-11 flex-none place-items-center rounded-xl border border-[#eae4f6] bg-[#f8f5ff] text-[#937ec5]"><WorkspaceIcon kind={presentation.kind === "recording" ? "video" : "slides"} /></span>
+                          <span className="home-file-icon"><WorkspaceIcon kind={presentation.kind === "recording" ? "video" : "slides"} /></span>
                           <div className="min-w-0">
                             <p className="m-0 truncate text-[13px] leading-5 font-medium text-[#3c334b]" title={presentation.original_filename}>{presentation.original_filename}</p>
                             <p className="mb-0 mt-1 text-[11px] leading-4 text-[#9b90a7]">{presentation.kind === "recording" ? "Recording" : `Presentation · ${presentation.slide_count ?? "—"} slides`}<span className="md:hidden"> · {status.label} · {presentationDate(presentation.created_at)}</span></p>
@@ -212,9 +212,9 @@ export default function WorkspaceHomePage() {
                         <div className="hidden md:block"><span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${status.className}`}><span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />{status.label}</span></div>
                         <span className="hidden text-[11px] text-[#94889f] md:block">{presentationDate(presentation.created_at)}</span>
                         <div className="flex items-center gap-2 pl-14 sm:justify-end sm:pl-0">
-                          {presentation.kind === "recording" ? <Link className="rounded-lg border border-[#e7e0ef] px-3 py-2 text-[11px] text-[#70617f]" href={"/upload-practice?session=" + presentation.id}>Report</Link> : <>
-                            <Link className="rounded-lg border border-[#e7e0ef] px-3 py-2 text-[11px] text-[#70617f]" href={"/slide?presentation=" + presentation.id}>Slides</Link>
-                            <Link className="rounded-lg border border-[#e7e0ef] px-3 py-2 text-[11px] text-[#70617f]" href={"/transcript?presentation=" + presentation.id}>Script</Link>
+                          {presentation.kind === "recording" ? <Link className="home-open-button" href={"/upload-practice?session=" + presentation.id}>Report</Link> : <>
+                            <Link className="home-open-button" href={"/slide?presentation=" + presentation.id}>Slides</Link>
+                            <Link className="home-open-button" href={"/transcript?presentation=" + presentation.id}>Script</Link>
                           </>}
                         </div>
                       </li>

@@ -7,6 +7,7 @@ are configurable engineering heuristics, not universal rules about body language
 from collections import Counter
 
 RULE_VERSION = "gesture-rules-v3"
+WORDING_VERSION = "gesture-wording-v4"
 
 
 def pattern_key(event: dict) -> tuple:
@@ -56,6 +57,39 @@ def rule_decision(event: dict, events: list[dict]) -> dict:
 def _most_common(samples: list[dict], key: str, default: str) -> str:
     values = [sample[key] for sample in samples if sample.get(key)]
     return Counter(values).most_common(1)[0][0] if values else default
+
+
+def gesture_label(event: dict) -> str:
+    """Name only distinctions supported by the stored measurements."""
+    kind = event["type"]
+    samples = event.get("measurements") or []
+    body = _most_common(samples, "body_part", "")
+    posture = _most_common(samples, "posture", "")
+    axes = {sample.get("axis") for sample in samples if sample.get("axis")}
+    if kind == "repeated_swaying":
+        if axes == {"torso lean"}:
+            return "Repeated torso leaning"
+        if axes == {"whole-body lateral shifting"}:
+            return "Repeated sideways body shifting"
+        if axes == {"torso lean", "whole-body lateral shifting"}:
+            return "Repeated leaning and sideways shifting"
+        return "Repeated body swaying"
+    if kind == "repeated_head_movement":
+        return {frozenset({"side to side"}): "Repeated head turns",
+                frozenset({"up and down"}): "Repeated nodding",
+                frozenset({"in sideways tilts"}): "Repeated sideways head tilts"}.get(
+                    frozenset(axes), "Repeated head movements")
+    if kind == "arms_crossed":
+        if posture == "folded across your torso":
+            return "Both arms folded across torso"
+        if posture == "toward the opposite shoulder":
+            return f"{body.removeprefix('your ').capitalize()} across to opposite shoulder" if body else "Arm across to opposite shoulder"
+        return "Arm crossing across torso"
+    if kind == "gesture_box_excursion":
+        return f"{body.removeprefix('your ').capitalize()} extended sideways" if body else "Wide sideways reach"
+    if kind == "hand_near_face":
+        return f"{body.removeprefix('your ').capitalize()} near face" if body else "Hand near face"
+    return "Hands held together low on torso"
 
 
 def measured_coaching(event: dict) -> dict:
@@ -125,10 +159,57 @@ def measured_coaching(event: dict) -> dict:
         ),
     }
     title, observation, impact, recommendation = text[kind]
+    if kind == "arms_crossed":
+        if posture == "folded across your torso":
+            title = "Unfold both arms between points"
+            recommendation = "Unfold your forearms and let both hands rest comfortably before your next point."
+        elif posture == "toward the opposite shoulder":
+            title = f"Lower {body} from the opposite shoulder"
+            recommendation = f"Bring {body} back from across your chest, then let it rest before the next point."
+    elif kind == "gesture_box_excursion":
+        title = f"Bring {body} back after the sideways reach"
+        recommendation = f"Finish the sideways emphasis, then lower {body} before starting the next idea."
+    elif kind == "hand_near_face":
+        hand = body.replace("arm", "hand")
+        title = f"Lower {hand} away from your face"
+        recommendation = f"Move {hand} away from your face and let it rest while you finish the sentence."
+    elif kind == "repeated_head_movement":
+        axes = {sample.get("axis") for sample in samples if sample.get("axis")}
+        variants = {
+            "side to side": ("Pause the repeated head turns", "Keep your head facing one direction while finishing the sentence, then turn for the next point."),
+            "up and down": ("Pause the repeated nodding", "Let your head settle upright after a nod while you finish the sentence."),
+            "in sideways tilts": ("Settle the sideways head tilts", "Bring your head back upright rather than repeatedly tipping it toward either shoulder."),
+        }
+        if len(axes) == 1 and axis in variants:
+            title, recommendation = variants[axis]
+        elif len(axes) > 1:
+            directions = [direction for direction in variants if direction in axes]
+            observation = "Your head repeatedly moved " + " and ".join(directions) + f" during this {duration_text} passage."
+    elif kind == "repeated_swaying":
+        axes = {sample.get("axis") for sample in samples if sample.get("axis")}
+        if axes == {"torso lean"}:
+            title = "Settle the side-to-side torso leaning"
+            observation = "Your upper body repeatedly leaned toward one side and then the other"
+            impact = "Repeated upper-body leaning can pull attention away from your explanation."
+            recommendation = "Bring your shoulders back over your hips and finish the next sentence without alternating your torso lean."
+        elif axes == {"whole-body lateral shifting"}:
+            title = "Settle the sideways body shifting"
+            observation = "Your shoulders and hips repeatedly shifted sideways together"
+            impact = "Repeated sideways movement of your body can compete with the point you are explaining."
+            recommendation = "Let your body settle in one position while finishing the point; make the next sideways move deliberately at a transition."
+        elif axes == {"torso lean", "whole-body lateral shifting"}:
+            title = "Settle the leaning and sideways shifting"
+            observation = "Your upper body repeatedly leaned side to side, and your shoulders and hips also shifted sideways together"
+            recommendation = "Settle your shoulders over your hips and hold one position through the sentence before moving again."
+        else:
+            observation = "Your body moved from side to side repeatedly"
+        observation += (f", changing direction at least {repeats} times in this passage." if repeats
+                        else f" during this {duration_text} passage.")
     if episodes >= 2 and kind not in {"repeated_head_movement", "repeated_swaying"}:
         observation += f" The same pattern occurred {episodes} times nearby."
     return {
         "assessment": "adjustment", "source": "code", "version": RULE_VERSION,
+        "wording_version": WORDING_VERSION,
         "title": title, "observation": observation, "impact": impact,
         "recommendation": recommendation,
         "evidence_seconds": [float(event.get("evidence_seconds", event["start_seconds"]))],
@@ -144,11 +225,14 @@ def prepare_gesture_events(events: list[dict]) -> list[dict]:
         decision = rule_decision(event, events)
         if not decision["is_issue"]:
             continue
+        event["label"] = gesture_label(event)
         event["detection"] = decision
         coaching = measured_coaching(event)
         polished = event.get("coaching")
         polished = polished if isinstance(polished, dict) else {}
-        if polished.get("version") == RULE_VERSION and polished.get("source") == "rewrite":
+        if (polished.get("version") == RULE_VERSION
+                and polished.get("wording_version") == WORDING_VERSION
+                and polished.get("source") == "rewrite"):
             # The model may rewrite advice only, never observations or decisions.
             for key in ("title", "impact", "recommendation"):
                 if isinstance(polished.get(key), str) and polished[key].strip():

@@ -1,0 +1,45 @@
+/* Slide Analyzer shares the workspace's restrained type and spacing scale. */
+.slide-workspace { color:#292635; background:#f6f6f9; font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+.slide-workspace * { box-sizing:border-box; }
+.slide-workspace button:focus-visible, .slide-workspace a:focus-visible { outline:2px solid #6b4fd3; outline-offset:3px; }
+.slide-header { height:64px; min-height:64px; grid-template-columns:190px minmax(0,1fr) auto; }
+.slide-header > span[aria-hidden] { display:none; }
+.slide-header > a { justify-content:flex-start; padding-left:24px; border-right:1px solid #e4e2eb; }
+.slide-header > div:nth-of-type(1) { display:flex; gap:24px; padding:0 24px; }
+.slide-header h1 { font-size:17px; font-weight:600; letter-spacing:-.5px; }
+.slide-header > div:nth-of-type(1) > div { justify-content:flex-start; font-size:11px; }
+.slide-header > div:nth-of-type(1) strong { font-weight:400; max-width:260px; }
+.slide-header > div:last-child { gap:8px; padding-right:24px; }
+.slide-header > div:last-child button, .slide-header > div:last-child a { min-height:34px; border-radius:7px; font-size:11px; font-weight:600; }
+.slide-layout { height:calc(100dvh - 64px); grid-template-columns:190px minmax(0,1fr) 360px; }
+.slide-rail > div:first-child { padding:16px; }
+.slide-rail h2 { font-size:11px; text-transform:none; font-weight:600; }
+.slide-rail > div:nth-child(2) { padding:8px; display:flex; flex-direction:column; gap:7px; }
+.slide-rail > div:nth-child(2) > button { flex:none; grid-template-columns:17px minmax(0,1fr) 25px; gap:5px; padding:7px 5px; border-radius:7px; }
+.slide-rail > div:last-child { padding:14px 12px; font-size:10px; }
+.slide-stage { padding:22px 24px 16px; background:#f6f6f9; }
+.slide-stage > div:first-child { gap:16px; margin-bottom:18px; }
+.slide-stage > div:first-child > div:first-child { min-width:0; }
+.slide-stage h1 { font-size:21px; font-weight:600; letter-spacing:-.6px; line-height:1.25; overflow-wrap:anywhere; }
+.slide-stage > div:first-child p { font-size:10px; font-weight:500; letter-spacing:.5px; margin-bottom:6px; }
+.slide-stage > div:first-child > div:last-child { flex:none; border-radius:7px; }
+.slide-canvas { container-type:size; border:1px solid #e2dfea; border-radius:10px; background:#edecf2; background-image:none; }
+.slide-image { width:min(92%,720px,calc((100cqh - 40px) * 16 / 9)); max-height:calc(100cqh - 40px); border-radius:3px; box-shadow:0 8px 28px #29263514; }
+.slide-stage > nav { padding-top:14px; font-size:11px; }
+.slide-stage > nav button { min-width:84px; border:1px solid #e4e2eb; border-radius:7px; font-size:11px; font-weight:500; padding:8px 12px; }
+.slide-inspector { background:#faf9fc; border-color:#e4e2eb; }
+.slide-inspector > div:first-child { padding:20px 20px 16px; }
+.slide-inspector > div:first-child h2 { font-size:17px; font-weight:600; letter-spacing:-.4px; }
+.slide-inspector > div:first-child p { font-size:10px; font-weight:500; letter-spacing:.6px; }
+.slide-inspector > div:first-child strong { font-size:27px; font-weight:600; letter-spacing:-1px; }
+.slide-inspector > .grid.grid-cols-3 { padding:0 12px; }
+.slide-inspector > .grid.grid-cols-3 button { font-size:11px; padding:12px 0; font-weight:600; }
+.slide-inspector > .overflow-y-auto { padding:20px; gap:18px; background:#faf9fc; scrollbar-width:thin; scrollbar-color:#d8d3e4 transparent; }
+.slide-inspector section { border-radius:8px; }
+.slide-inspector h3 { font-size:13px; font-weight:600; letter-spacing:-.15px; }
+.slide-inspector p { font-size:12px; line-height:1.65; }
+.slide-inspector ol { gap:4px; }
+.slide-inspector ol li { padding-top:10px; padding-bottom:10px; gap:10px; }
+.slide-inspector ol li p { margin-top:7px; }
+@media(max-width:1300px) { .slide-layout { grid-template-columns:170px minmax(0,1fr) 330px; } .slide-header { grid-template-columns:170px minmax(0,1fr) auto; } .slide-header > div:nth-of-type(1) { gap:16px; padding:0 18px; } .slide-header > div:nth-of-type(1) strong { max-width:180px; } .slide-header > div:nth-of-type(1) > div > span:last-child { display:none; } .slide-stage { padding:18px; } }
+@media(max-height:740px) { .slide-stage { padding-top:16px; } .slide-stage h1 { font-size:19px; } .slide-inspector > div:first-child { padding-top:16px; } }

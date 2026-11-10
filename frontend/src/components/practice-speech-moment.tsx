@@ -17,8 +17,8 @@ function time(seconds: number) {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
-export function PracticeSpeechMoment({ moment, accessToken }: {
-  moment: SpeechMoment; accessToken: string | null;
+export function PracticeSpeechMoment({ moment, accessToken, presentation = "compact" }: {
+  moment: SpeechMoment; accessToken: string | null; presentation?: "compact" | "review";
 }) {
   const [source, setSource] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -46,6 +46,23 @@ export function PracticeSpeechMoment({ moment, accessToken }: {
     })();
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [accessToken, moment.audio_url]);
+
+  if (presentation === "review") return <div className="practice-clarity-columns">
+    <div className="practice-clarity-evidence">
+      <h4>What you said <span>{time(moment.start_seconds)}–{time(moment.end_seconds)}</span></h4>
+      <blockquote>{moment.transcript_excerpt}</blockquote>
+      {source ? <audio key={source} controls preload="metadata" src={source} aria-label={"Listen to speech at " + time(moment.start_seconds)} />
+        : <p className="practice-note">{error ? "Audio could not be loaded. Refresh to retry." : moment.audio_url ? "Loading audio excerpt…" : "Audio is unavailable for this excerpt."}</p>}
+      <small>Automatically transcribed; wording and timing may contain errors.</small>
+    </div>
+    <div className="practice-clarity-advice">
+      {moment.coaching_status === "ready" ? <>
+        {moment.observation && <><h4>What to work on</h4><p>{moment.observation}</p></>}
+        {moment.recommendation && <div className="practice-clarity-recommendation"><h4>Try this next</h4><p>{moment.recommendation}</p></div>}
+        {moment.suggested_delivery && <><h4>Try saying it this way</h4><blockquote className="practice-clarity-example">{moment.suggested_delivery}</blockquote></>}
+      </> : <p className="practice-note">Feedback for this excerpt couldn’t be generated. Choose “Retry speech feedback” above to try again.</p>}
+    </div>
+  </div>;
 
   return <div className="practice-speech-excerpt">
     <p className="practice-eyebrow">What you said · {time(moment.start_seconds)}–{time(moment.end_seconds)}</p>

@@ -44,15 +44,15 @@
 .practice-gesture-axis > div > span:first-child { transform:none; }
 .practice-gesture-axis > div > span:last-child { transform:translateX(-100%); }
 .practice-gesture-track { border-top:1px solid #eeebf3; }
-.practice-gesture-track-label { position:sticky; left:0; z-index:2; display:flex; align-items:center; gap:10px; background:#faf9fc; border-right:1px solid #e8e3f1; padding:12px 14px; color:#65547e; font-size:12px; line-height:1.5; }
+.practice-gesture-track-label { position:sticky; left:0; z-index:2; display:flex; align-items:center; gap:10px; background:#faf9fc; border-right:1px solid #e8e3f1; padding:8px 12px; color:#65547e; font-size:12px; line-height:1.5; }
 .practice-gesture-track-label svg { flex-shrink:0; }
-.practice-gesture-track-moments { position:relative; margin-right:48px; min-height:78px; }
+.practice-gesture-track-moments { position:relative; margin-right:48px; min-height:64px; }
 .practice-gesture-grid-line { position:absolute; top:0; bottom:0; width:1px; background:#f0edf5; pointer-events:none; }
-.practice-gesture-marker { position:absolute; height:78px; color:#75688a; }
-.practice-gesture-marker > button { position:absolute; top:0; left:0; height:78px; display:flex; flex-direction:column; align-items:flex-start; gap:4px; border:0; background:transparent; padding:7px 0 0; color:inherit; cursor:pointer; }
-.practice-gesture-marker time { font-size:10px; font-weight:600; white-space:nowrap; }
+.practice-gesture-marker { position:absolute; height:64px; color:#75688a; }
+.practice-gesture-marker > button { position:absolute; top:0; left:0; height:64px; display:flex; flex-direction:column; align-items:flex-start; gap:2px; border:0; background:transparent; padding:3px 0 0; color:inherit; cursor:pointer; }
+.practice-gesture-marker time { line-height:12px; font-size:10px; font-weight:600; white-space:nowrap; }
 .practice-gesture-marker > button > span { display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:1px solid #dcd4ec; border-radius:7px; background:#f5f1fb; }
-.practice-gesture-duration { position:absolute; left:0; bottom:7px; width:100%; height:5px; background:#b6a3dc; border-radius:3px; pointer-events:none; }
+.practice-gesture-duration { position:absolute; left:0; bottom:3px; width:100%; height:3px; background:#b6a3dc; border-radius:3px; pointer-events:none; }
 .practice-gesture-marker:hover > button > span { background:#eae3f8; }
 .practice-gesture-marker.is-selected { color:#5c3da4; }
 .practice-gesture-marker.is-selected > button > span { background:#e9e0fa; border:2px solid #8363c3; }
@@ -140,3 +140,140 @@
 .practice-speech-excerpt .practice-rehearsal { border-color:#a997dc; background:#f2eff9; }
 @media(max-width:760px) { .practice-speech-grid { grid-template-columns:minmax(0,1fr); padding-inline:0; } .practice-speech-grid::before { display:none; } }
 @media(max-width:760px) { .practice-columns,.practice-pace-details { grid-template-columns:1fr; } .practice-heading { align-items:start; flex-direction:column; } .practice-nav-brand { gap:14px; } .practice-nav-brand > span { padding-left:14px; font-size:12px; } .practice-panel-heading { flex-wrap:wrap; } .practice-chart-caption { min-height:60px; } .practice-content { padding:20px 16px; } }
+
+/* Movement-specific colors stay consistent in row labels, markers and replay. */
+[data-gesture] { --gesture-color:#70519d; --gesture-soft:#f1eafa; --gesture-border:#d8c9eb; }
+[data-gesture="arms_crossed"] { --gesture-color:#a34d38; --gesture-soft:#fff0e9; --gesture-border:#efc8ba; }
+[data-gesture="gesture_box_excursion"] { --gesture-color:#3e6aab; --gesture-soft:#edf4ff; --gesture-border:#c1d5f2; }
+[data-gesture="hand_near_face"] { --gesture-color:#9d5179; --gesture-soft:#fff0f7; --gesture-border:#edc7dc; }
+[data-gesture="hands_clasped_low"] { --gesture-color:#9a7126; --gesture-soft:#fff8e6; --gesture-border:#ead8a9; }
+[data-gesture="repeated_swaying"] { --gesture-color:#337f70; --gesture-soft:#eaf8f3; --gesture-border:#badfd4; }
+[data-gesture="repeated_head_movement"] { --gesture-color:#7051a3; --gesture-soft:#f3edff; --gesture-border:#d7c7ee; }
+.practice-gesture-track-label { color:var(--gesture-color); }
+.practice-gesture-track-label > svg { width:36px; height:36px; padding:3px; border-radius:8px; background:var(--gesture-soft); }
+.practice-gesture-marker { color:var(--gesture-color); }
+.practice-gesture-marker > button > span { width:36px; height:36px; color:var(--gesture-color); background:var(--gesture-soft); border-color:var(--gesture-border); }
+.practice-gesture-duration { background:var(--gesture-border); }
+.practice-gesture-marker:hover > button > span { background:var(--gesture-soft); border-color:var(--gesture-color); }
+.practice-gesture-marker.is-selected { color:var(--gesture-color); }
+.practice-gesture-marker.is-selected > button > span { background:var(--gesture-soft); border:2px solid var(--gesture-color); box-shadow:inset 0 0 0 1px var(--gesture-color); }
+.practice-gesture-marker.is-selected > .practice-gesture-duration { background:var(--gesture-color); }
+.practice-gesture-selected-label > svg { color:var(--gesture-color); width:32px; height:32px; }
+
+.practice-gesture-marker > button > span { box-sizing:border-box; flex-shrink:0; border-width:2px; }
+.practice-gesture-marker > button:focus-visible { outline:0; }
+.practice-gesture-marker > button:focus-visible > span { outline:2px solid var(--gesture-color); outline-offset:2px; }
+
+/* Desktop rehearsal report: a single reading surface with a persistent index. */
+.practice-report-shell { --report-line:#e7e4ed; }
+.practice-report-header { display:flex; align-items:center; justify-content:space-between; gap:32px; padding:8px 0 26px; margin-bottom:28px; border-bottom:1px solid var(--report-line); }
+.practice-report-identity { display:flex; align-items:center; gap:14px; min-width:0; flex:1; }
+.practice-report-identity > div { min-width:0; }
+.practice-recording-icon { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; color:#75628f; }
+.practice-recording-icon svg { width:30px; height:30px; }
+.practice-report-identity .practice-eyebrow { margin-bottom:5px; font-size:10px; }
+.practice-report-identity h1 { margin:0; font-size:22px; line-height:1.35; font-weight:600; letter-spacing:-.035em; overflow-wrap:anywhere; }
+.practice-report-header-bottom { display:flex; flex-direction:column; align-items:flex-end; gap:14px; flex-shrink:0; }
+.practice-report-metadata { display:flex; gap:24px; margin:0; }
+.practice-report-metadata > div { display:flex; align-items:baseline; gap:7px; }
+.practice-report-metadata dt { font-size:11px; color:#8a8196; }
+.practice-report-metadata dd { margin:0; font-size:11px; font-weight:500; color:#51465e; font-variant-numeric:tabular-nums; }
+.practice-report-header .practice-button { padding:7px 11px; font-size:11px; border-radius:7px; }
+.practice-report-header .practice-button.danger { border-color:transparent; background:transparent; color:#947c89; }
+.practice-report-layout { display:block; }
+.practice-report-index { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:28px; padding:0 4px; margin-bottom:20px; border-bottom:1px solid var(--report-line); background:#f8f8fb; }
+.practice-report-index button { display:block; border:0; background:transparent; cursor:pointer; padding:15px 4px 13px; border-bottom:2px solid transparent; color:#8c8298; font-size:12px; font-weight:500; transition:color .15s,border-color .15s; }
+.practice-report-index button[aria-selected="true"] { border-bottom-color:#8264b3; color:#5f428a; font-weight:600; }
+.practice-report-index button:hover { color:#5f428a; }
+.practice-report-body { min-width:0; background:white; padding:0 28px; border:1px solid var(--report-line); border-radius:12px; }
+.practice-report-section { scroll-margin-top:72px; }
+.practice-report-section[hidden] { display:none; }
+.practice-report-shell .practice-panel { border:0; border-radius:0; box-shadow:none; margin:0; background:transparent; overflow:visible; }
+.practice-report-shell .practice-panel-heading { padding:28px 0 20px; }
+.practice-report-shell .practice-panel-heading .practice-eyebrow { font-size:10px; color:#8e7ba9; }
+.practice-report-shell .practice-panel h2 { font-size:21px; letter-spacing:-.035em; }
+.practice-report-shell .practice-muted { font-size:12px; max-width:640px; line-height:1.7; }
+.practice-report-shell .practice-gesture-timeline-heading { padding:0 0 12px; display:flex; align-items:baseline; gap:14px; }
+.practice-report-shell .practice-gesture-timeline-heading h3 { font-size:11px; white-space:nowrap; }
+.practice-report-shell .practice-gesture-timeline-heading p { font-size:11px; margin:0; }
+.practice-report-shell .practice-gesture-timeline-scroll { margin:0; border-radius:8px; overflow-x:auto; }
+.practice-report-shell .practice-gesture-axis { position:sticky; top:0; z-index:3; border-bottom:1px solid #e8e3f1; }
+.practice-report-shell .practice-gesture-timeline-note { padding:10px 0 18px; }
+.practice-report-shell .practice-gesture-card { padding:24px 0 28px; gap:24px; }
+.practice-report-shell .practice-gesture-selected-label { font-size:11px; }
+.practice-report-shell .practice-gesture-coaching h3 { font-size:18px; margin-bottom:20px; }
+.practice-report-shell .practice-gesture-explanation p,.practice-report-shell .practice-gesture-action p { font-size:12px; }
+.practice-report-shell .practice-gesture-action { border:0; border-left:2px solid #9a82c6; border-radius:0; padding:10px 14px; background:#f7f4fb; }
+.practice-report-shell .practice-gesture-warning { margin:0 0 18px; }
+.practice-report-shell .practice-empty { padding:0 0 24px; }
+.practice-report-shell .practice-speech-grid { padding:0 0 24px; gap:24px; }
+.practice-report-shell .practice-speech-row > summary { padding:14px 12px 14px 0; }
+.practice-report-shell .practice-finding { padding:0 12px 20px 0; }
+.practice-report-shell .practice-chart-key { padding:0 0 10px; gap:10px 20px; font-size:10px; }
+.practice-report-shell .practice-chart-scroll { padding:0; }
+.practice-report-shell .practice-chart-caption { padding:8px 0 20px; }
+.practice-report-shell .practice-pace-details { padding:20px 0 28px; background:transparent; }
+.practice-report-shell .practice-count { background:#f3eff8; font-size:10px; }
+@media(min-width:1024px) and (max-width:1250px) {
+  .practice-report-body { padding:0 20px; }
+  .practice-report-header { gap:20px; }
+  .practice-report-metadata { gap:12px; }
+  .practice-report-metadata > div { display:grid; gap:3px; }
+}
+
+.practice-gesture-marker > button > span svg { width:30px; height:30px; }
+
+.practice-gesture-click-hint { display:inline-flex; align-items:center; gap:5px; }
+.practice-gesture-click-hint svg { flex-shrink:0; color:#8b76ab; }
+.practice-gesture-selection-notice { position:absolute; top:20px; z-index:4; display:flex; align-items:center; gap:5px; width:max-content; padding:5px 8px; border:1px solid #e5dfed; border-radius:6px; background:#fff; color:#79658d; font-size:10px; line-height:14px; box-shadow:0 2px 7px #3421420a; pointer-events:none; animation:gesture-selection-notice 2s ease both; }
+@keyframes gesture-selection-notice { 0% { opacity:0; } 10%,80% { opacity:1; } 100% { opacity:0; } }
+@media(prefers-reduced-motion:reduce) { .practice-gesture-selection-notice { animation:none; } }
+
+/* Clarity has its own tab: show evidence and coaching without accordions. */
+.practice-clarity-finding { border-top:1px solid #e9e5ef; padding:22px 0 26px; }
+.practice-clarity-finding > header { display:flex; align-items:baseline; justify-content:space-between; gap:20px; margin-bottom:18px; }
+.practice-report-shell .practice-clarity-finding > header h3 { font-size:15px; font-weight:600; line-height:1.5; color:#45384f; }
+.practice-clarity-finding > header time { flex-shrink:0; color:#8b7d98; font-size:11px; font-variant-numeric:tabular-nums; }
+.practice-clarity-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; align-items:start; }
+.practice-clarity-columns > div { min-width:0; }
+.practice-clarity-columns > div + div { border-left:1px solid #e9e5ef; padding-left:24px; }
+.practice-clarity-columns h4 { margin:0 0 8px; color:#6c5a7c; font-size:11px; line-height:1.5; font-weight:600; }
+.practice-clarity-columns h4 span { margin-left:8px; color:#9b90a6; font-weight:400; font-variant-numeric:tabular-nums; }
+.practice-clarity-columns p { margin:0 0 16px; font-size:12px; line-height:1.75; color:#74677f; }
+.practice-clarity-columns blockquote { margin:0 0 12px; padding:12px 14px; border-left:2px solid #d8cee7; background:#f8f6fb; font-size:13px; line-height:1.8; color:#5d5069; overflow-wrap:anywhere; }
+.practice-clarity-columns audio { display:block; width:100%; height:36px; margin:12px 0 8px; }
+.practice-clarity-columns small { color:#a095aa; font-size:10px; line-height:1.6; }
+.practice-clarity-recommendation { margin:14px 0 18px; padding:12px 14px; border-left:2px solid #a28bc9; background:#f7f3fc; }
+.practice-clarity-recommendation p { margin:0; }
+.practice-clarity-columns .practice-clarity-example { background:transparent; border-left-color:#d4c8e5; font-size:12px; }
+
+/* Speaking pace uses the same open evidence/coaching layout as clarity. */
+.practice-report-shell .practice-pace-overview { padding:16px 18px 0; border:1px solid #e9e5ef; border-radius:10px; background:#fdfcfe; }
+.practice-pace-chart-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:16px; }
+.practice-report-shell .practice-pace-chart-heading h3 { font-size:12px; color:#6d607a; }
+.practice-report-shell .practice-pace-chart-heading .practice-chart-key { padding:0; gap:18px; }
+.practice-report-shell .practice-pace-panel .practice-chart-caption { padding:4px 0 12px; min-height:32px; font-size:10px; }
+.practice-report-shell .practice-pace-panel .practice-pace-details { border:0; padding:22px 0 26px; gap:22px; }
+.practice-pace-picker > .practice-eyebrow { margin-bottom:10px; }
+.practice-pace-picker .practice-intervals { gap:8px; }
+.practice-pace-picker .practice-intervals button { padding:8px 11px; border-radius:7px; }
+.practice-report-shell .practice-pace-review { border-top:1px solid #e9e5ef; padding-top:22px; }
+.practice-pace-review .practice-selected-title { align-items:center; margin-bottom:20px; }
+.practice-pace-review .practice-selected-title h3 { margin:0; font-size:15px; line-height:1.5; color:#45384f; }
+.practice-pace-review .practice-pace-review-label { margin:0 0 4px; font-size:11px; font-weight:500; }
+.practice-pace-review-label.fast { color:#b76548; }
+.practice-pace-review-label.slow { color:#587da8; }
+.practice-selected-title .practice-pace-estimate { display:grid; gap:3px; text-align:right; font-size:12px; color:#76658c; font-weight:600; }
+.practice-pace-estimate > span { font-size:10px; font-weight:400; color:#9b90a5; }
+.practice-pace-review .practice-clarity-columns p { margin:0 0 16px; line-height:1.75; }
+.practice-pace-review .practice-clarity-recommendation p { margin:0; }
+.practice-pace-review .practice-clarity-columns small { font-size:10px; line-height:1.6; }
+.practice-pace-review .practice-pace-review-note { margin:16px 0 0; color:#9b91a5; font-size:10px; line-height:1.6; }
+
+/* Keep pace evidence quiet and readable within the report. */
+.practice-report-shell .practice-pace-overview { padding:20px 0 0; border:0; border-top:1px solid #ebe8f0; border-radius:0; background:white; }
+.practice-pace-overview .practice-chart-scroll { padding:0; }
+.practice-report-shell .practice-pace-chart-heading { margin-bottom:18px; }
+.practice-report-shell .practice-pace-chart-heading h3 { color:#45384f; font-size:13px; }
+.practice-pace-chart-heading .practice-chart-key span:first-child i { width:16px; height:2px; border-radius:0; }
+.practice-pace-chart-heading .practice-chart-key span:not(:first-child) i { width:10px; height:10px; border-radius:2px; opacity:.5; }

@@ -14,9 +14,9 @@ export function gestureMarkers<T extends Moment>(events: T[], end: number, width
       : item.end_seconds - item.start_seconds;
     const markerWidth = Math.max(0, span / end * width);
     const hitWidth = Math.max(44, markerWidth);
-    let lane = laneEnds.findIndex(last => last + 6 <= left);
+    let lane = laneEnds.findIndex(last => last + 12 <= left);
     if (lane < 0) lane = laneEnds.length;
-    laneEnds[lane] = left + Math.max(hitWidth, 54);
+    laneEnds[lane] = left + Math.max(hitWidth, 60);
     return { item, left, width: markerWidth, hitWidth,
       leftPercent: item.start_seconds / end * 100,
       widthPercent: Math.max(0, span / end * 100), lane };

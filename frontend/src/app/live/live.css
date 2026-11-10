@@ -1,0 +1,77 @@
+.live-workspace { --live-accent:#6b4fd3; --live-line:#e4e2eb; --live-text:#292635; --live-secondary:#6d697b; --live-muted:#888393; background:#f6f6f9; color:var(--live-text); font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+.live-workspace *, .live-workspace *::before, .live-workspace *::after { box-sizing:border-box; }
+.live-workspace button:focus-visible, .live-workspace a:focus-visible { outline:2px solid var(--live-accent); outline-offset:3px; }
+.live-workspace .live-header { height:64px; min-height:64px; padding:0 32px; background:white; border-color:var(--live-line); backdrop-filter:none; }
+.live-header h1 { font-size:17px; font-weight:600; letter-spacing:-.4px; }
+.live-header > div > p { margin-top:2px; font-size:10px; font-weight:400; color:var(--live-muted); }
+.live-header > div:last-child > span { font-size:10px; font-weight:500; padding:5px 10px; }
+.live-workspace .live-layout { gap:20px; padding:24px 32px; max-width:1440px; }
+.live-camera-box { border-radius:12px; border-color:#ddd9e5; box-shadow:0 4px 20px #2926350c; }
+.live-camera-box > div:first-child { padding:14px; }
+.live-camera-box > div:first-child > span { font-size:10px; font-weight:500; padding:5px 10px; }
+.live-camera-frame > div > div > h2 { font-size:19px; font-weight:600; letter-spacing:-.4px; }
+.live-camera-frame > div > div > p { font-size:12px; line-height:1.7; }
+.live-camera-frame > p:last-child { bottom:14px; max-width:calc(100% - 28px); width:max-content; padding:6px 10px; font-size:10px; line-height:1.5; border-radius:6px; }
+.live-workspace .live-controls { margin-top:14px; padding:12px 14px; gap:10px; border-radius:9px; border-color:var(--live-line); box-shadow:none; }
+.live-controls > p { font-size:11px; line-height:1.6; color:var(--live-secondary); }
+.live-controls > div { gap:7px; }
+.live-controls button { height:34px; font-size:11px; font-weight:500; padding:0 11px; border-radius:6px; box-shadow:none; }
+.live-controls button[aria-label="About recalibration"] { width:25px; padding:0; }
+.live-controls button svg { width:12px; height:12px; }
+.live-sidebar { gap:16px; }
+.live-workspace .live-setup, .live-workspace .live-guide, .live-workspace .live-status, .live-workspace .live-moments { border:1px solid var(--live-line); border-radius:10px; box-shadow:0 1px 3px #29263503; }
+.live-setup { padding:20px; }
+.live-setup > p:first-child { font-size:10px; letter-spacing:0; text-transform:none; font-weight:600; color:var(--live-accent); }
+.live-setup h2 { margin-top:8px; font-size:19px; line-height:1.3; font-weight:600; letter-spacing:-.4px; }
+.live-setup > p:nth-of-type(2) { margin-top:12px; font-size:12px; line-height:1.7; color:var(--live-secondary); }
+.live-setup ol { margin-top:18px; gap:10px; }
+.live-setup li { align-items:center; font-size:11px; line-height:1.6; grid-template-columns:20px minmax(0,1fr); gap:10px; }
+.live-setup li > span { width:20px; height:20px; border-radius:5px; font-size:9px; font-weight:600; }
+.live-workspace .live-guide { margin-top:16px; padding:20px; }
+.live-guide h2 { font-size:13px; font-weight:600; letter-spacing:-.1px; color:var(--live-text); }
+.live-guide > p { font-size:11px; line-height:1.7; color:var(--live-muted); }
+.live-guide dl { margin-top:14px; }
+.live-guide dl > div { grid-template-columns:70px minmax(0,1fr); align-items:center; gap:12px; padding:12px 0; }
+.live-guide dt, .live-guide dd { font-size:11px; line-height:1.65; color:var(--live-secondary); }
+.live-guide dt { font-weight:600; gap:7px; }
+.live-guide dt svg { width:15px; height:15px; flex:none; }
+.live-workspace .live-status { padding:16px; }
+.live-status > div:first-child { margin-bottom:12px; }
+.live-status h2 { font-size:13px; font-weight:600; color:var(--live-text); }
+.live-status > div:first-child > span { font-size:10px; color:var(--live-muted); }
+.live-status dl { gap:7px; }
+.live-status dl > div { padding:9px 10px; border-radius:6px; gap:8px; }
+.live-status dt { font-size:10px; }
+.live-status dd { font-size:11px; font-weight:500; line-height:1.5; }
+.live-moments > header { padding:16px; border-color:var(--live-line); background:#fdfcfe; }
+.live-moments h2 { font-size:15px; font-weight:600; line-height:22px; letter-spacing:-.25px; color:var(--live-text); }
+.live-moments > header > div > span { font-size:10px; color:var(--live-muted); }
+.live-moments > header > p { font-size:11px; color:var(--live-muted); }
+.live-moments > ol { padding:4px 10px; scrollbar-width:thin; scrollbar-color:#d8d3e4 transparent; }
+.live-moments .live-event { margin:9px 0; padding:11px 12px; border-radius:7px; }
+.live-event time { background:#ffffff90; font-size:10px; color:var(--live-secondary); }
+.live-event > p:first-of-type { font-size:12px; font-weight:600; line-height:1.65; }
+.live-event > p:last-child { margin-top:3px; font-size:10px; line-height:1.65; color:var(--live-secondary); }
+.live-event > div:first-child > div > span { font-size:9px; line-height:1.6; }
+.live-moments > div > div > span { width:34px; height:34px; margin-bottom:14px; border-radius:9px; }
+.live-moments > div h3 { font-size:12px; color:var(--live-secondary); }
+.live-moments > div p { font-size:11px; line-height:1.7; color:var(--live-muted); }
+.live-moments > footer { padding:10px 16px; font-size:10px; color:var(--live-muted); border-color:var(--live-line); }
+.live-workspace .live-privacy { font-size:10px; color:var(--live-muted); }
+.live-workspace .live-notice { max-width:480px; padding:11px 14px; border-radius:8px; box-shadow:0 4px 20px #29263512; font-size:11px; font-weight:500; }
+@media(min-width:1024px) {
+  /* Keep one camera aspect ratio in every stage, including short laptops. */
+  .live-workspace .live-layout { grid-template-columns:minmax(0,65fr) minmax(0,35fr); max-width:min(1440px,calc((100dvh - 210px) * 2.735)); }
+}
+@media(max-height:740px) {
+  .live-workspace .live-layout { padding-top:18px; padding-bottom:18px; gap:16px; }
+  .live-setup { padding:16px; }
+  .live-setup h2 { font-size:17px; }
+  .live-setup ol { margin-top:14px; gap:8px; }
+  .live-workspace .live-guide { padding:16px; margin-top:14px; }
+  .live-guide > p { margin-top:6px; }
+  .live-guide dl { margin-top:10px; }
+  .live-guide dl > div { padding:8px 0; }
+  .live-workspace .live-status { padding:14px; }
+  .live-moments > header { padding:14px 16px; }
+}

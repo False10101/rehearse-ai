@@ -1,5 +1,7 @@
 "use client";
 
+import "./slide-secondary.css";
+
 import { useEffect, useRef, useState } from "react";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -118,9 +120,9 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
   const selected = catalog?.templates.find((item) => item.id === layout);
   const palette = catalog?.themes[theme];
   return <>
-    <button ref={launchRef} className={`w-full rounded-lg border px-3 py-2 text-[0.72rem] font-extrabold ${updating ? "border-[#ddd7f7] bg-white text-[#6753ea] hover:bg-[#f7f5ff]" : "border-[#f2d2ad] bg-[#fffaf2] text-[#a86410]"} ${focus}`} onClick={() => { setError(null); setOpen(true); }} type="button">✦ {label}</button>
-    {open ? <div className="fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-3 backdrop-blur-sm sm:p-6">
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="agenda-title" aria-describedby="agenda-description" className="flex max-h-[92dvh] w-full max-w-[72rem] flex-col overflow-hidden rounded-2xl bg-white text-[#282336] shadow-2xl outline-none" onKeyDown={(event) => {
+    <button ref={launchRef} className={`agenda-launch w-full rounded-lg border px-3 py-2 text-[0.72rem] font-extrabold ${updating ? "border-[#ddd7f7] bg-white text-[#6753ea] hover:bg-[#f7f5ff]" : "border-[#f2d2ad] bg-[#fffaf2] text-[#a86410]"} ${focus}`} onClick={() => { setError(null); setOpen(true); }} type="button">✦ {label}</button>
+    {open ? <div className="agenda-overlay fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-3 backdrop-blur-sm sm:p-6">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="agenda-title" aria-describedby="agenda-description" className="agenda-dialog flex max-h-[92dvh] w-full max-w-[72rem] flex-col overflow-hidden rounded-2xl bg-white text-[#282336] shadow-2xl outline-none" onKeyDown={(event) => {
         if (event.key === "Escape" && !creating) { event.stopPropagation(); setOpen(false); }
         if (event.key !== "Tab") return;
         const elements = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? []);
@@ -133,8 +135,8 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
           <div><h2 className="m-0 text-xl font-semibold tracking-tight" id="agenda-title">{designOnly ? "Change agenda design" : updating ? "Regenerate your agenda" : "An agenda that fits your presentation"}</h2><p className="mb-0 mt-2 text-sm text-[#83788e]" id="agenda-description">{designOnly ? "Choose a layout and palette. Your current agenda text and slide position will stay the same." : updating ? "We’ll rewrite the sections from your deck and replace this agenda in the same position." : "Choose a layout and palette. We’ll write the sections from your deck and add the slide in the right place."}</p></div>
           <button className={`rounded-lg px-2 text-2xl text-[#887c96] disabled:opacity-30 ${focus}`} aria-label="Close agenda builder" disabled={creating} onClick={() => setOpen(false)} type="button">×</button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {!catalog ? <div className="grid min-h-80 place-items-center px-6 text-center" role="status"><div><p className="text-sm text-[#82748e]">{loadError ?? (loading ? "Loading agenda styles…" : "Preparing agenda styles…")}</p>{loadError ? <button className={`rounded-lg border px-4 py-2 text-sm ${focus}`} onClick={() => setRetry((value) => value + 1)} type="button">Try again</button> : null}</div></div> : <div className="grid md:grid-cols-[15rem_minmax(0,1fr)]">
+        <div className="agenda-body min-h-0 flex-1 overflow-y-auto">
+          {!catalog ? <div className="grid min-h-80 place-items-center px-6 text-center" role="status"><div><p className="text-sm text-[#82748e]">{loadError ?? (loading ? "Loading agenda styles…" : "Preparing agenda styles…")}</p>{loadError ? <button className={`rounded-lg border px-4 py-2 text-sm ${focus}`} onClick={() => setRetry((value) => value + 1)} type="button">Try again</button> : null}</div></div> : <div className="agenda-design-layout grid md:grid-cols-[15rem_minmax(0,1fr)]">
             <aside className="border-b border-[#ebe7f0] bg-[#faf9fc] p-5 md:border-b-0 md:border-r" aria-label="Agenda layouts">
               <p className="mb-4 mt-0 text-xs font-semibold uppercase tracking-wider text-[#8e809c]">Choose a layout</p>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
@@ -144,7 +146,7 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
                 </button>)}
               </div>
             </aside>
-            <div className="flex min-w-0 flex-col justify-center p-5 sm:p-7">
+            <div className="agenda-design-preview flex min-w-0 flex-col justify-center p-5 sm:p-7">
               <div className="mb-4 flex items-center justify-between"><h3 className="m-0 text-sm font-semibold">{selected?.name}</h3><span className="text-xs text-[#93849f]">Example content · up to 6 sections</span></div>
               <div className="overflow-hidden rounded-xl border border-[#e5dfea] shadow-[0_12px_35px_rgba(48,32,70,0.06)]">{selected && palette ? <AgendaPreview template={selected} palette={palette} label={`${selected.name} in ${theme}`} /> : null}</div>
               <fieldset className="m-0 mt-7 min-w-0 border-0 p-0" disabled={creating}>

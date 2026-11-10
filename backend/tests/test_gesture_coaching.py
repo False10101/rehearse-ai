@@ -122,3 +122,59 @@ def test_body_language_finding_ignores_legacy_ai_verdict():
 
 def test_unknown_pattern_is_not_invented_as_a_detection():
     assert not rule_decision(event("not-a-supported-rule"), [])["is_issue"]
+
+
+@pytest.mark.parametrize("kind,axis,label,correction", [
+    ("repeated_swaying", "torso lean", "Repeated torso leaning", "shoulders back over your hips"),
+    ("repeated_swaying", "whole-body lateral shifting", "Repeated sideways body shifting", "one position"),
+    ("repeated_head_movement", "side to side", "Repeated head turns", "one direction"),
+    ("repeated_head_movement", "up and down", "Repeated nodding", "after a nod"),
+    ("repeated_head_movement", "in sideways tilts", "Repeated sideways head tilts", "either shoulder"),
+])
+def test_motion_variant_keeps_specific_label_and_correction(kind, axis, label, correction):
+    candidate = event(kind, measurements=[{"axis": axis, "reversal_seconds": [10.2, 11.5]}])
+    result = prepare_gesture_events([candidate])[0]
+    assert result["label"] == label
+    assert correction in result["coaching"]["recommendation"]
+    assert result["duration_seconds"] == candidate["duration_seconds"]
+
+
+def test_folded_and_single_arm_reach_feedback_remain_distinct():
+    folded = event(measurements=[{"body_part": "both forearms", "posture": "folded across your torso"}])
+    reach = event(measurements=[{"body_part": "your right arm", "posture": "toward the opposite shoulder"}])
+    first, second = [prepare_gesture_events([e])[0] for e in (folded, reach)]
+    assert first["label"] == "Both arms folded across torso"
+    assert "Unfold both arms" in first["coaching"]["title"]
+    assert "Right arm" in second["label"]
+    assert "your right arm" in second["coaching"]["recommendation"]
+
+
+def test_missing_measurements_do_not_invent_variant_and_mixed_keeps_both():
+    generic = prepare_gesture_events([event("repeated_swaying")])[0]
+    assert generic["label"] == "Repeated body swaying"
+    assert "shoulders and hips" not in generic["coaching"]["observation"]
+    mixed = prepare_gesture_events([event("repeated_swaying", measurements=[
+        {"axis": "torso lean"}, {"axis": "whole-body lateral shifting"}
+    ])])[0]
+    assert "leaned" in mixed["coaching"]["observation"]
+    assert "shifted sideways together" in mixed["coaching"]["observation"]
+
+
+def test_old_generic_rewrite_cannot_replace_new_specific_wording():
+    from app.services.gesture_rules import WORDING_VERSION
+    candidate = event("repeated_swaying", measurements=[{"axis": "torso lean"}], coaching={
+        "version": RULE_VERSION, "source": "rewrite", "title": "Old generic title",
+        "recommendation": "Old correction", "impact": "Old impact",
+    })
+    result = prepare_gesture_events([candidate])[0]
+    assert result["coaching"]["source"] == "code"
+    assert result["coaching"]["wording_version"] == WORDING_VERSION
+    assert "torso leaning" in result["coaching"]["title"]
+    assert candidate["coaching"]["title"] == "Old generic title"
+
+
+def test_side_preserved_for_hand_near_face_without_claiming_contact():
+    result = prepare_gesture_events([event("hand_near_face", measurements=[{"body_part": "your left hand"}])])[0]
+    assert result["label"] == "Left hand near face"
+    assert "your left hand" in result["coaching"]["recommendation"]
+    assert "touching" not in result["coaching"]["observation"]

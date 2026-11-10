@@ -5,7 +5,7 @@ import { ReactNode, useEffect } from "react";
 
 import { isAuth0Configured, useAuth } from "@/components/auth/auth-provider";
 
-const publicRoutes = new Set(["/", "/login", "/auth/callback"]);
+const publicRoutes = new Set(["/", "/auth/callback"]);
 
 function ProtectedRouteBoundary({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
@@ -17,15 +17,13 @@ function ProtectedRouteBoundary({ children }: Readonly<{ children: ReactNode }>)
     if (isLoading) return;
 
     if (!isAuthenticated && !isPublicRoute) {
-      router.replace("/login");
+      router.replace("/");
       return;
     }
 
-    if (isAuthenticated && pathname === "/login") router.replace("/home");
   }, [isAuthenticated, isLoading, isPublicRoute, pathname, router]);
 
   if (!isPublicRoute && (isLoading || !isAuthenticated)) return null;
-  if (pathname === "/login" && isAuthenticated) return null;
 
   return children;
 }

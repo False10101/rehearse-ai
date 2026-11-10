@@ -1,5 +1,7 @@
 "use client";
 
+import "./transcript-dialogs.css";
+
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { phraseMatches } from "@/lib/transcript-highlights";
@@ -128,7 +130,7 @@ export function ScriptHighlights({ editor, terms, upgrades, dirty, busy, enabled
       {enabled && available > 0 && !dirty && <button ref={reviewButton} type="button" onClick={() => { move(1); requestAnimationFrame(() => requestAnimationFrame(() => popover.current?.querySelector<HTMLButtonElement>("button")?.focus())); }} className={`rounded text-[#7963a7] hover:text-[#574276] ${focus}`}>Review</button>}
       {enabled && dirty && <span>Save to refresh</span>}
     </div>
-    {active && !dirty && enabled && createPortal(<div ref={popover} role="dialog" aria-label={active.upgrade ? "Wording suggestion" : "Term explanation"} className="fixed z-[80] w-[320px] max-w-[calc(100vw-24px)] rounded-xl border border-[#e6e1ec] bg-white p-4 font-sans text-[#51485d] shadow-[0_8px_28px_rgba(38,24,60,0.14)]" style={anchor}>
+    {active && !dirty && enabled && createPortal(<div ref={popover} role="dialog" aria-label={active.upgrade ? "Wording suggestion" : "Term explanation"} className="transcript-highlight-popover fixed z-[80] w-[320px] max-w-[calc(100vw-24px)] rounded-xl border border-[#e6e1ec] bg-white p-4 font-sans text-[#51485d] shadow-[0_8px_28px_rgba(38,24,60,0.14)]" style={anchor}>
       <div className="mb-2 flex items-center justify-between gap-3"><span className="text-[0.6875rem] text-[#9b92a5]">{active.upgrade ? "Wording suggestion" : "Term explanation"}</span><button type="button" aria-label="Close highlight details" onClick={() => { setActive(null); reviewButton.current?.focus(); }} className={`rounded px-1 text-[#9b92a5] ${focus}`}>×</button></div>
       <p className="m-0 break-words text-sm font-semibold">{active.upgrade?.original ?? active.term?.term}</p>
       {active.term && <><p className="mb-0 mt-2 text-xs leading-5 text-[#756a82]">{active.term.definition}</p>{active.term.pronunciation && <p className="mb-0 mt-2 text-xs text-[#9b92a5]">Say it: {active.term.pronunciation}</p>}</>}

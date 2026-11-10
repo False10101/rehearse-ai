@@ -1,5 +1,7 @@
 "use client";
 
+import "./transcript-dialogs.css";
+
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -59,8 +61,8 @@ export function TranscriptVersions({ slideNumber, entries, current, loading, bus
   const focusStyle = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8e7cf4]";
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] grid place-items-center bg-[#191724]/45 p-4 font-sans text-[#302b3b] backdrop-blur-[4px] sm:p-8">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="transcript-versions-title" className="flex h-[min(700px,calc(100dvh-2rem))] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border border-white/70 bg-white shadow-[0_28px_90px_-24px_rgba(25,20,50,0.4)] sm:h-[min(700px,calc(100dvh-4rem))]" onKeyDown={(event) => {
+    <div className="transcript-dialog-overlay transcript-versions-overlay fixed inset-0 z-[100] grid place-items-center bg-[#191724]/45 p-4 font-sans text-[#302b3b] backdrop-blur-[4px] sm:p-8">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="transcript-versions-title" className="transcript-dialog transcript-versions-dialog flex h-[min(700px,calc(100dvh-2rem))] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border border-white/70 bg-white shadow-[0_28px_90px_-24px_rgba(25,20,50,0.4)] sm:h-[min(700px,calc(100dvh-4rem))]" onKeyDown={(event) => {
         if (event.key === "Escape" && !busy) { event.preventDefault(); onClose(); }
         if (event.key !== "Tab") return;
         const controls = Array.from(dialog.current?.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled), [tabindex='0']") ?? []);
@@ -83,8 +85,8 @@ export function TranscriptVersions({ slideNumber, entries, current, loading, bus
           </button>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <aside className="flex max-h-44 shrink-0 flex-col border-b border-[#eeecf2] bg-[#faf9fc] sm:max-h-none sm:w-[236px] sm:border-b-0 sm:border-r" aria-label="Saved versions">
+        <div className="transcript-version-body flex min-h-0 flex-1 flex-col sm:flex-row">
+          <aside className="transcript-version-list flex max-h-44 shrink-0 flex-col border-b border-[#eeecf2] bg-[#faf9fc] sm:max-h-none sm:w-[236px] sm:border-b-0 sm:border-r" aria-label="Saved versions">
             <div className="shrink-0 px-4 pb-3 pt-4">
               <label htmlFor="version-filter" className="mb-2 flex items-center justify-between text-xs font-medium text-[#797181]">Saved versions<span className="text-[0.6875rem] font-normal tabular-nums text-[#a19aa9]">{entries.length}</span></label>
               <select id="version-filter" value={filter} onChange={(event) => setFilter(event.target.value)} className={`transcript-select w-full rounded-lg border border-[#e4dfea] bg-white px-3 py-2 text-xs text-[#62596e] ${focusStyle}`}>
@@ -95,7 +97,7 @@ export function TranscriptVersions({ slideNumber, entries, current, loading, bus
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-busy={loading}>
               {loading ? <p className="px-3 text-xs text-[#8a8394]">Loading versions…</p> : filtered.length ? filtered.map((entry) => {
                 const active = selected?.id === entry.id;
-                return <button key={entry.id} type="button" disabled={busy} aria-pressed={active} onClick={() => setSelectedId(entry.id)} className={`mb-1 block w-full rounded-lg border px-3 py-3 text-left transition-colors disabled:opacity-60 ${focusStyle} ${active ? "border-[#ded6fa] bg-white shadow-[0_2px_5px_rgba(45,28,95,0.04)]" : "border-transparent hover:bg-[#f0edf5]"}`}>
+                return <button key={entry.id} type="button" disabled={busy} aria-pressed={active} onClick={() => setSelectedId(entry.id)} className={`transcript-version-item mb-1 block w-full rounded-lg border px-3 py-3 text-left transition-colors disabled:opacity-60 ${focusStyle} ${active ? "border-[#ded6fa] bg-white shadow-[0_2px_5px_rgba(45,28,95,0.04)]" : "border-transparent hover:bg-[#f0edf5]"}`}>
                   <span className="flex items-center justify-between gap-2">
                     <span className={`text-[0.8125rem] font-semibold ${active ? "text-[#6546ce]" : "text-[#51485d]"}`}>Version {entry.revision}</span>
                     {entry.is_current && <span className="rounded-full bg-[#eaf6ef] px-2 py-0.5 text-[0.625rem] font-medium text-[#38805a]">Current</span>}
@@ -107,14 +109,14 @@ export function TranscriptVersions({ slideNumber, entries, current, loading, bus
             </div>
           </aside>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="transcript-version-detail flex min-h-0 min-w-0 flex-1 flex-col">
             {selected && !loading ? <>
               <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-[#eeecf2] px-5 py-3">
                 {settings.map((item) => <div key={item.name} className="flex items-center gap-1.5 text-[0.6875rem]"><span className="text-[#9a92a5]">{item.name}</span><span className="font-medium text-[#62566f]">{item.value}</span></div>)}
                 {!settings.length && <span className="text-xs text-[#8a8394]">{labels[selected.change_type] ?? "Saved script"}</span>}
                 {(selected.legacy || selected.change_type === "saved") && <span className="ml-auto text-[0.6875rem] text-[#a19aa9]" title="This earlier saved script is available, but its individual edits were not recorded.">Earlier saved script</span>}
               </div>
-              <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-[#eeecf2]">
+              <div className="transcript-version-comparison grid min-h-0 flex-1 grid-cols-2 divide-x divide-[#eeecf2]">
                 {[{ title: "Current script", text: current, badge: "Saved" }, { title: `Version ${selected.revision}`, text: selected.paragraphs, badge: "Selected" }].map(({ title, text, badge }, index) => <section key={title} className={`flex min-h-0 min-w-0 flex-col ${index ? "bg-[#fdfcff]" : "bg-white"}`}>
                   <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#eeecf2] px-5 py-3.5">
                     <h3 className={`m-0 text-[0.8125rem] font-semibold leading-5 ${index ? "text-[#6850c9]" : "text-[#62596e]"}`}>{title}</h3>

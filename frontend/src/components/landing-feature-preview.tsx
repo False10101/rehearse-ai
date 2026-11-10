@@ -1,0 +1,49 @@
+import type { ReactNode } from "react";
+import "./landing-feature-preview.css";
+
+const slideNames = ["Introduction", "The challenge", "Our approach", "Next steps"];
+
+function MiniSlide({ index = 1 }: { index?: number }) {
+  return <div className="showcase-slide"><small>PROJECT OVERVIEW</small><h4>{index === 1 ? <>Good ideas need<br />a clear explanation.</> : slideNames[index]}</h4><p>Make the main point easy to find.</p><div className="showcase-slide-steps"><span>Content</span><span>Structure</span><span>Delivery</span></div></div>;
+}
+
+function DeckRail({ scores = false }: { scores?: boolean }) {
+  return <aside className="showcase-rail"><div>Slides <span>· 4 total</span></div><section>{slideNames.map((name, i) => <div className={`showcase-thumbnail-row${i === 1 ? " active" : ""}${scores ? " with-score" : ""}`} key={name}><small>0{i + 1}</small><div className="showcase-thumbnail"><b>{name}</b><i /><i /></div>{scores && <span>8.{i + 1}</span>}</div>)}</section><footer>● {scores ? "All slide feedback is saved" : "Transcript is saved"}</footer></aside>;
+}
+
+function PreviewHeader({ index }: { index: number }) {
+  return <div className={`showcase-appbar${index === 2 ? " live" : ""}`}><div className="showcase-brand"><b>R</b><strong>Rehearse AI</strong></div><strong>{["Slide Analyzer", "Transcript Enhancer", "Live Practice", "Upload Practice"][index]}</strong>{index < 2 && <span className="showcase-filename">Project overview.pptx · 4 slides</span>}<div className="showcase-toolbar">{index === 0 ? <><span>Deck summary</span><span>Transcript</span><b>↓ Export</b></> : index === 1 ? <><span>Slide analyzer</span><b>↓ Export</b></> : index === 2 ? <em>● Live coaching</em> : <span>Back to workspace</span>}</div></div>;
+}
+
+function Note({ title, children, tone = "plain" }: { title: string; children: ReactNode; tone?: "plain" | "green" }) {
+  return <div className={`showcase-note ${tone}`}><strong>{title}</strong><p>{children}</p></div>;
+}
+
+function SlideNavigation() {
+  return <div className="showcase-slide-navigation"><span>← Previous</span><small>02 / 04</small><span>Next →</span></div>;
+}
+
+function SlidePreview() {
+  return <div className="showcase-deck"><DeckRail scores /><section className="showcase-slide-work"><div className="showcase-work-heading"><div><small>SLIDE 02 OF 04</small><h3>The challenge</h3></div><span>−　100%　+</span></div><div className="showcase-slide-canvas"><MiniSlide /></div><SlideNavigation /></section><aside className="showcase-feedback"><header><small>Slide analysis</small><h3>Slide feedback</h3><strong className="showcase-score">8.2 <small>/ 10</small></strong></header><div className="showcase-inspector-tabs"><b>Feedback</b><span>Table tips <i>1</i></span><span>References <i>0</i></span></div><div className="showcase-feedback-content"><Note title="No overload detected" tone="green">The content is divided into clear, manageable sections.</Note><Note title="Visual hierarchy">The heading is clear. Supporting text could use stronger contrast.</Note><h4>Improvement suggestions</h4><div className="showcase-suggestion"><span>01</span><div><small>MEDIUM</small><p>Darken the supporting text so it remains readable against the background.</p></div></div><div className="showcase-suggestion"><span>02</span><div><small>LOW</small><p>Give the three supporting points a little more room.</p></div></div></div></aside></div>;
+}
+
+function TranscriptPreview() {
+  return <div className="showcase-deck transcript"><DeckRail /><section className="showcase-script-work"><div className="showcase-work-heading"><div><small>SLIDE 02 OF 04</small><h3>The challenge</h3></div><span>Version history</span></div><div className="showcase-document"><header><div><strong>Presenter script</strong><span>Project overview.pptx · Slide 02</span></div><span>134 words<br />☑ Highlights</span></header><p>Think about the last time you had a good idea but struggled to explain it clearly.</p><p>The idea made sense to you. But your audience had to work to connect what they were seeing with what you were saying.</p><p className="showcase-selection">That’s the challenge: bringing your slides, your words, and your delivery together.</p><p>When those three work together, your audience can focus on the message.</p><footer>Edit directly, or select a passage to refine it with AI.</footer></div><SlideNavigation /></section><aside className="showcase-feedback"><header><small>Transcript settings</small><h3>Shape your script</h3></header><div className="showcase-feedback-content"><section className="showcase-control-card"><h4>Script controls</h4><div className="showcase-mode"><b>AI generate</b><span>Write & enhance</span></div><label>Duration <span>75 sec</span></label><div className="showcase-options"><span>Short</span><b>Standard</b><span>Detailed</span></div><label>Tone</label><div className="showcase-options two"><span>Auto</span><span>Persuasive</span><span>Informative</span><b>Conversational</b></div><label>Style</label><div className="showcase-options two"><b>Natural</b><span>Formal</span></div><label>Audience level</label><div className="showcase-setting">General audience <span>⌄</span></div><p>Clear, balanced explanations for a normal presentation.</p><div className="showcase-secondary-action">Generate all slides</div><div className="showcase-action">Generate this slide</div></section><Note title="Selected tone" tone="green">Conversational</Note></div></aside></div>;
+}
+
+function Presenter({ replay = false }: { replay?: boolean }) {
+  return <div className={`showcase-camera${replay ? " replay" : ""}`}><span className="showcase-live-badge">{replay ? "Replay · 0:28" : "Live camera"}</span><svg viewBox="0 0 640 360" aria-hidden="true"><rect width="640" height="360" fill="#ddd9e5"/><path d="M0 270 640 180v180H0Z" fill="#d1cadb"/><circle cx="320" cy="140" r="58" fill="#ada0bd"/><path d="M192 360v-35a128 128 0 0 1 256 0v35" fill="#8c7b9f"/>{!replay && <><rect x="166" y="45" width="308" height="270" rx="80" fill="none" stroke="white" strokeOpacity=".8"/><circle cx="320" cy="51" r="3" fill="white"/></>}</svg>{replay ? <div className="showcase-video-controls"><span>▶　0:00 / 0:08</span><i /><span>⛶</span></div> : <p>Keep your eyes near the marker</p>}</div>;
+}
+
+function LivePreview() {
+  return <div className="showcase-live"><div className="showcase-live-camera-column"><Presenter /><div className="showcase-camera-controls"><span>Coaching is running.</span><div><span>Recalibrate</span><b>Ⅱ Pause</b><em>■ End session</em></div></div></div><aside className="showcase-live-events"><div className="showcase-current"><header><h3>Live coaching</h3><small>Current movements</small></header><div className="showcase-status-grid">{[["Eyes", "Looking forward"], ["Head", "Facing forward"], ["Body", "Steady"], ["Hands", "Not in view"]].map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></div><section className="showcase-moments"><header><h3>Coaching moments</h3><small>2 moments</small><p>What to adjust as you practise</p></header><div className="showcase-event-list"><div className="showcase-event eye"><span>Eyes <small>0:42</small></span><strong>Repeated glances to the left</strong><p>3 glances within the last 10 seconds</p></div><div className="showcase-event hand"><span>Hands <small>0:28</small></span><strong>Hand covering your face</strong><p>Your hand stayed in front of your face.</p></div></div><footer>Only this session · Clears when you end practice</footer></section></aside></div>;
+}
+
+function RecordingPreview() {
+  return <div className="showcase-recording"><header className="showcase-recording-title"><div><small>Rehearsal report</small><h3>Presentation rehearsal.mp4</h3></div><div><span>Recording length　2:04</span><span>Reviewed on　Nov 11</span></div></header><div className="showcase-report-tabs"><b>Body language</b><span>Clarity & fluency</span><span>Speaking pace</span></div><section className="showcase-report-surface"><small>On camera</small><h3>Gestures & body language</h3><p>See what happened, why it may matter, and one adjustment to try.</p><div className="showcase-timeline"><div className="showcase-time-axis"><span>Recording time</span><div><span>0:00</span><span>0:30</span><span>1:00</span><span>1:30</span><span>2:00</span></div></div>{["Arms across torso", "Wide arm extensions", "Head movement", "Body leaning & shifting", "Hands near face", "Hands held together"].map((label, i) => <div className="showcase-timeline-row" key={label}><span>{label}</span><div>{i < 4 && <i className={i === 3 ? "active" : ""} style={{ left: `${i === 3 ? 23 : 14 + i * 20}%` }}>{["0:18", "0:42", "1:04", "0:28"][i]}</i>}</div></div>)}</div><p className="showcase-timeline-hint">Click a gesture to see its replay and feedback below.</p><div className="showcase-recording-evidence"><div><Presenter replay /><small>Silent replay with the surrounding context.</small></div><div><small>Body leaning & shifting · 0:28–0:36</small><h3>Settle the repeated sideways leaning</h3><strong>What happened</strong><p>Your upper body leaned from side to side during this passage.</p><strong>Why it matters</strong><p>Repeated movement can compete with the point you are delivering.</p><div className="showcase-recommendation"><strong>Try this next</strong><p>Settle your weight between points and let your hands carry the emphasis.</p></div></div></div></section></div>;
+}
+
+export function LandingFeaturePreview({ index }: { index: number }) {
+  const titles = ["Slide Analyzer", "Transcript Enhancer", "Live Practice", "Upload Practice"];
+  return <div className="showcase-frame" aria-label={`${titles[index]} example interface`}><PreviewHeader index={index} /><div className="showcase-view" key={index}>{index === 0 ? <SlidePreview /> : index === 1 ? <TranscriptPreview /> : index === 2 ? <LivePreview /> : <RecordingPreview />}</div></div>;
+}

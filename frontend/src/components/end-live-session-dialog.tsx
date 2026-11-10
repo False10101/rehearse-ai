@@ -1,5 +1,7 @@
 "use client";
 
+import "./live-overlays.css";
+
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
@@ -14,7 +16,7 @@ export function EndLiveSessionDialog({ onCancel, onConfirm }: { onCancel: () => 
     return () => { document.body.style.overflow = overflow; previous?.focus({ preventScroll: true }); };
   }, []);
   if (typeof document === "undefined") return null;
-  return createPortal(<div className="fixed inset-0 z-[130] grid place-items-center bg-[#191724]/45 p-5 backdrop-blur-[4px]">
+  return createPortal(<div className="live-end-overlay fixed inset-0 z-[130] grid place-items-center bg-[#191724]/45 p-5 backdrop-blur-[4px]">
     <div ref={dialog} role="alertdialog" aria-modal="true" aria-labelledby="end-live-title" aria-describedby="end-live-description" className="w-full max-w-[400px] rounded-2xl border border-white/70 bg-white p-6 font-sans shadow-[0_24px_70px_-20px_rgba(25,20,50,0.35)]" onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); onCancel(); }
       if (event.key !== "Tab") return;

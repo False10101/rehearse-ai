@@ -1,5 +1,7 @@
 "use client";
 
+import "./live.css";
+
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { FaceLandmarker, PoseLandmarker, HandLandmarker, ObjectDetector } from "@mediapipe/tasks-vision";
@@ -506,8 +508,8 @@ export default function LivePracticePage() {
   const statusLabel = stage === "paused" ? "Paused" : stage === "live" ? "Live coaching" : stage === "calibrate" ? "Camera check" : "Ready";
 
   return (
-    <main className={`min-h-dvh ${isSessionActive ? "lg:flex lg:h-dvh lg:min-h-0 lg:flex-col lg:overflow-hidden" : ""} bg-[#f7f7f9] text-[#1d1c2a] [background:radial-gradient(circle_at_85%_4%,#e4e0ff_0,transparent_28rem),radial-gradient(circle_at_7%_100%,#e8f6ff_0,transparent_32rem),#f7f7f9]`}>
-      <header className="grid min-h-[74px] shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-[#e7e6ed] bg-white/85 px-[clamp(1rem,3vw,3.25rem)] backdrop-blur">
+    <main data-stage={stage} className={`live-workspace min-h-dvh ${isSessionActive ? "lg:flex lg:h-dvh lg:min-h-0 lg:flex-col lg:overflow-hidden" : ""} bg-[#f7f7f9] text-[#1d1c2a] [background:radial-gradient(circle_at_85%_4%,#e4e0ff_0,transparent_28rem),radial-gradient(circle_at_7%_100%,#e8f6ff_0,transparent_32rem),#f7f7f9]`}>
+      <header className="live-header grid min-h-[74px] shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-[#e7e6ed] bg-white/85 px-[clamp(1rem,3vw,3.25rem)] backdrop-blur">
         <Link className="w-fit rounded-lg no-underline" href="/home"><Brand /></Link>
         <div className="text-center">
           <h1 className="m-0 text-[1.2rem] font-extrabold tracking-[-0.055em] text-[#20202c]">Live Practice</h1>
@@ -521,15 +523,15 @@ export default function LivePracticePage() {
         </div>
       </header>
 
-      <section className={`mx-auto grid w-full max-w-[96rem] gap-5 px-[clamp(1rem,2.4vw,2.4rem)] py-[clamp(1rem,2vw,1.8rem)] ${isSessionActive ? "lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)]" : ""} lg:items-stretch lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)]`} aria-label="Live practice workspace">
-        <section className="min-w-0">
-          <div className="relative overflow-hidden rounded-[24px] border border-[#e1e0e8] bg-[#171724] shadow-[0_22px_60px_rgba(32,29,55,0.16)]">
+      <section className={`live-layout mx-auto grid w-full max-w-[96rem] gap-5 px-[clamp(1rem,2.4vw,2.4rem)] py-[clamp(1rem,2vw,1.8rem)] ${isSessionActive ? "lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)]" : ""} lg:items-stretch lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)]`} aria-label="Live practice workspace">
+        <section className="live-camera-column min-w-0">
+          <div className="live-camera-box relative overflow-hidden rounded-[24px] border border-[#e1e0e8] bg-[#171724] shadow-[0_22px_60px_rgba(32,29,55,0.16)]">
             <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-4 sm:p-5">
               <span className="rounded-full border border-white/20 bg-[#171724]/55 px-3 py-1.5 text-[0.67rem] font-bold text-white backdrop-blur">{permission !== "granted" ? "Camera off" : stage === "live" ? "Live camera" : stage === "paused" ? "Camera on" : "Camera ready"}</span>
               {isSessionActive ? <span className="rounded-full bg-[#f0edff]/95 px-3 py-1.5 text-[0.67rem] font-bold text-[#5f4ee0]">{stage === "paused" ? "Paused" : connection === "connected" ? "Live feedback" : "Connecting…"}</span> : null}
             </div>
 
-            <div className="relative aspect-[16/9] bg-[radial-gradient(circle_at_50%_42%,#545062_0,transparent_32%),linear-gradient(145deg,#242332,#15151d)]">
+            <div className="live-camera-frame relative aspect-[16/9] bg-[radial-gradient(circle_at_50%_42%,#545062_0,transparent_32%),linear-gradient(145deg,#242332,#15151d)]">
               <video autoPlay className={`absolute inset-0 h-full w-full -scale-x-100 object-cover transition-opacity duration-300 ${permission === "granted" ? "opacity-100" : "opacity-0"}`} muted playsInline ref={videoRef} />
               {permission !== "granted" ? <div className="absolute inset-0 grid place-items-center px-6 pb-6 pt-16 text-center"><div><span aria-hidden="true" className="mx-auto grid h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/5 text-[#bdb6d2]"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h-4L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2-3Z" /><circle cx="12" cy="13" r="3" /></svg></span><h2 className="mb-0 mt-4 text-lg font-semibold tracking-tight text-white">{permission === "requesting" ? "Opening your camera…" : "Ready to practise?"}</h2><p className="mx-auto mb-0 mt-2 max-w-[300px] text-xs leading-5 text-[#aaa3bc]">Turn on your camera, get comfortable, then start coaching.</p></div></div> : null}
 
@@ -537,7 +539,7 @@ export default function LivePracticePage() {
             </div>
           </div>
 
-          <div className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e4e3e9] bg-white px-4 py-3.5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]">
+          <div className="live-controls mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e4e3e9] bg-white px-4 py-3.5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]">
             <p className="m-0 max-w-[38rem] text-[0.74rem] leading-5 text-[#686675]">{stage === "live" ? "Coaching is running." : stage === "paused" ? "Tracking is paused. Resume when you’re ready." : permissionMessage(permission)}</p>
             <div className="flex flex-wrap items-center gap-2">
               {stage === "setup" ? <button className="inline-flex h-10 items-center justify-center leading-none rounded-lg bg-[#1d1c2a] px-3.5 py-0 text-[0.74rem] font-bold text-white disabled:cursor-wait disabled:opacity-60" disabled={permission === "requesting"} onClick={() => void enableCamera()} type="button">{permission === "requesting" ? "Opening camera…" : "Enable camera"}</button> : null}
@@ -554,9 +556,9 @@ export default function LivePracticePage() {
 
         </section>
 
-        <aside className={`min-w-0 ${isSessionActive ? "grid min-h-0 gap-4 lg:h-full lg:grid-rows-[auto_minmax(0,1fr)] lg:self-start" : "flex min-h-0 flex-col lg:[contain:size]"}`}>
-          {!isSessionActive ? <><section className="shrink-0 rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">{stage === "calibrate" ? "Calibration" : "Before you begin"}</p><h2 className="mb-0 mt-2 text-[1.18rem] tracking-[-0.05em]">{stage === "calibrate" ? "Check your camera position" : "Get ready to practise"}</h2><p className="mb-0 mt-3 text-[0.78rem] leading-6 text-[#676574]">{stage === "calibrate" ? "Face the camera with both eyes visible. When you’re comfortable, start coaching." : "Position your camera and turn it on. Coaching begins only when you choose Start coaching."}</p><ol className="mb-0 mt-5 grid list-none gap-3 p-0">{["Face a stable light source", "Keep both eyes visible", "Place the camera at eye level"].map((item, index) => <li className="grid grid-cols-[22px_1fr] items-start gap-2 text-[0.73rem] leading-5 text-[#4f4d5c]" key={item}><span className="grid h-[22px] w-[22px] place-items-center rounded-[7px] bg-[#f0edff] text-[0.62rem] font-extrabold text-[#6652e6]">0{index + 1}</span>{item}</li>)}</ol></section>
-            <section className="mt-4 flex min-h-0 flex-1 flex-col rounded-2xl border border-[#e4e0ee] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]" aria-labelledby="coaching-guide-title">
+        <aside className={`live-sidebar min-w-0 ${isSessionActive ? "grid min-h-0 gap-4 lg:h-full lg:grid-rows-[auto_minmax(0,1fr)] lg:self-start" : "flex min-h-0 flex-col lg:[contain:size]"}`}>
+          {!isSessionActive ? <><section className="live-setup shrink-0 rounded-2xl border border-[#e4e3e9] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]"><p className="m-0 text-[0.67rem] font-bold uppercase tracking-[0.1em] text-[#6755df]">{stage === "calibrate" ? "Calibration" : "Before you begin"}</p><h2 className="mb-0 mt-2 text-[1.18rem] tracking-[-0.05em]">{stage === "calibrate" ? "Check your camera position" : "Get ready to practise"}</h2><p className="mb-0 mt-3 text-[0.78rem] leading-6 text-[#676574]">{stage === "calibrate" ? "Face the camera with both eyes visible. When you’re comfortable, start coaching." : "Position your camera and turn it on. Coaching begins only when you choose Start coaching."}</p><ol className="mb-0 mt-5 grid list-none gap-3 p-0">{["Face a stable light source", "Keep both eyes visible", "Place the camera at eye level"].map((item, index) => <li className="grid grid-cols-[22px_1fr] items-start gap-2 text-[0.73rem] leading-5 text-[#4f4d5c]" key={item}><span className="grid h-[22px] w-[22px] place-items-center rounded-[7px] bg-[#f0edff] text-[0.62rem] font-extrabold text-[#6652e6]">0{index + 1}</span>{item}</li>)}</ol></section>
+            <section className="live-guide mt-4 flex min-h-0 flex-1 flex-col rounded-2xl border border-[#e4e0ee] bg-white p-5 shadow-[0_8px_24px_rgba(39,36,63,0.035)]" aria-labelledby="coaching-guide-title">
               <h2 id="coaching-guide-title" className="m-0 text-[0.95rem] font-semibold tracking-tight text-[#5c4a70]">What coaching looks for</h2>
               <p className="mb-0 mt-2 text-xs leading-5 text-[#93849f]">Coaching moments show what happened and when, so you can adjust as you speak.</p>
               <dl className="mb-0 mt-4 grid min-h-0 flex-1 auto-rows-[minmax(min-content,1fr)] divide-y divide-[#f0ecf5] overflow-y-auto">
@@ -569,7 +571,7 @@ export default function LivePracticePage() {
               </dl>
             </section>
           </> : <>
-          <section className="min-h-0 overflow-y-auto rounded-2xl border border-[#e7e1ee] bg-white px-4 py-3" aria-label="Live coaching status">
+          <section className="live-status min-h-0 overflow-y-auto rounded-2xl border border-[#e7e1ee] bg-white px-4 py-3" aria-label="Live coaching status">
             <div className="mb-3 flex items-center justify-between"><h2 className="m-0 text-sm font-semibold text-[#796788]">Live coaching</h2><span className="text-[0.6875rem] text-[#b0a1bd]">{stage === "paused" ? "Paused" : connection === "connected" ? "Current movements" : "Connecting…"}</span></div>
             <dl className="m-0 grid grid-cols-2 gap-2">{([['eyes', 'Eyes'], ['head', 'Head'], ['body', 'Body'], ['hands', 'Hands']] as const).map(([key, label]) => {
               const value = feedback?.status[key] ?? "Waiting";
@@ -577,7 +579,7 @@ export default function LivePracticePage() {
               return <div key={key} className={`flex min-w-0 items-start justify-between gap-2 rounded-lg border px-3 py-2 ${liveStatusStyle(value, active, stage === "paused")}`}><dt className="text-[0.6875rem] opacity-75">{label}</dt><dd className="m-0 flex items-start gap-1.5 text-right text-xs font-semibold leading-4"><span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current" />{value}</dd></div>;
             })}</dl>
           </section>
-          <section className="flex min-h-[300px] lg:min-h-0 flex-col overflow-hidden rounded-2xl border border-[#ddd5f0] bg-white shadow-[0_12px_40px_-18px_rgba(59,36,102,0.16)]" aria-labelledby="coaching-moments-title">
+          <section className="live-moments flex min-h-[300px] lg:min-h-0 flex-col overflow-hidden rounded-2xl border border-[#ddd5f0] bg-white shadow-[0_12px_40px_-18px_rgba(59,36,102,0.16)]" aria-labelledby="coaching-moments-title">
             <header className="shrink-0 border-b border-[#eee9f5] bg-[#fcfaff] px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 id="coaching-moments-title" className="m-0 text-base font-semibold leading-6 tracking-tight text-[#40324f]">Coaching moments</h2>
@@ -589,7 +591,7 @@ export default function LivePracticePage() {
               const active = event.active && stage === "live";
               const category = coachingCategory(event.kind);
               const colors = eventCategoryColors[category];
-              return <li className={`my-2 rounded-lg border px-3 py-2 ${colors.box} ${active ? "ring-1 ring-inset ring-[#d8b16e]" : ""}`} key={event.id}>
+              return <li data-category={category} className={`live-event my-2 rounded-lg border px-3 py-2 ${colors.box} ${active ? "ring-1 ring-inset ring-[#d8b16e]" : ""}`} key={event.id}>
                 <div className="mb-1 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2"><span className={`rounded-md px-1.5 py-0.5 text-[0.625rem] font-medium ${colors.badge}`}>{category}</span>{active && <span className="inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[#b47632]"><span className="h-1.5 w-1.5 rounded-full bg-[#d9a15b]" />Happening now</span>}</div>
                   <time className="shrink-0 rounded-md bg-[#f8f6fb] px-1.5 py-0.5 text-[0.6875rem] font-medium tabular-nums text-[#9e90ac]">{eventTime(event.startedAtSeconds)}</time>
@@ -601,9 +603,9 @@ export default function LivePracticePage() {
             <footer className="shrink-0 border-t border-[#eee9f5] px-4 py-2 text-[0.6875rem] text-[#b0a0bc]">Only this session · Clears when you end practice</footer>
           </section></>}
         </aside>
-        {!isSessionActive && <p className="m-0 -mt-2 px-1 text-[0.6875rem] leading-5 text-[#a99bb6] lg:col-span-2">No video is recorded or saved. Coaching moments stay only for this session.</p>}
+        {!isSessionActive && <p className="live-privacy m-0 -mt-2 px-1 text-[0.6875rem] leading-5 text-[#a99bb6] lg:col-span-2">No video is recorded or saved. Coaching moments stay only for this session.</p>}
       </section>
-      {sessionNote ? <p role="status" className={`fixed bottom-4 left-1/2 z-40 m-0 flex items-start justify-between gap-3 w-[min(90vw,36rem)] -translate-x-1/2 rounded-xl border px-4 py-3 text-[0.73rem] font-medium shadow-lg ${sessionNoteTone === "error" ? "border-[#efc9d1] bg-[#fff6f8] text-[#a23f56]" : sessionNoteTone === "warning" ? "border-[#efd8b7] bg-[#fffaf1] text-[#9b641f]" : "border-[#d5eadf] bg-[#f5fff8] text-[#24724b]"}`}><span>{sessionNote}</span><button type="button" aria-label="Dismiss message" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-black/5" onClick={() => setSessionNote("")}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button></p> : null}
+      {sessionNote ? <p role="status" className={`live-notice fixed bottom-4 left-1/2 z-40 m-0 flex items-start justify-between gap-3 w-[min(90vw,36rem)] -translate-x-1/2 rounded-xl border px-4 py-3 text-[0.73rem] font-medium shadow-lg ${sessionNoteTone === "error" ? "border-[#efc9d1] bg-[#fff6f8] text-[#a23f56]" : sessionNoteTone === "warning" ? "border-[#efd8b7] bg-[#fffaf1] text-[#9b641f]" : "border-[#d5eadf] bg-[#f5fff8] text-[#24724b]"}`}><span>{sessionNote}</span><button type="button" aria-label="Dismiss message" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-black/5" onClick={() => setSessionNote("")}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button></p> : null}
       {confirmEnd && isSessionActive && <EndLiveSessionDialog onCancel={cancelEndSession} onConfirm={endSession} />}
     </main>
   );

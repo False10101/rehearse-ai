@@ -1,5 +1,7 @@
 "use client";
 
+import "./live-overlays.css";
+
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -58,7 +60,7 @@ export function LiveRecalibrationHelp() {
       onBlur={() => setOpen(false)}
       onClick={() => setOpen(true)}
     ><span aria-hidden="true" className="grid h-[18px] w-[18px] place-items-center rounded-full border border-current text-[0.6875rem] font-semibold">?</span></button>
-    {open && createPortal(<div ref={tooltip} id={id} role="tooltip" style={position} className="pointer-events-none fixed z-[120] w-[272px] max-w-[calc(100vw-24px)] rounded-xl border border-[#e6e1ef] bg-white px-4 py-3 font-sans shadow-[0_6px_24px_rgba(31,22,51,0.16)]">
+    {open && createPortal(<div ref={tooltip} id={id} role="tooltip" style={position} className="live-help-tooltip pointer-events-none fixed z-[120] w-[272px] max-w-[calc(100vw-24px)] rounded-xl border border-[#e6e1ef] bg-white px-4 py-3 font-sans shadow-[0_6px_24px_rgba(31,22,51,0.16)]">
       <p className="m-0 text-xs font-semibold text-[#514561]">When to recalibrate</p>
       <p className="mb-0 mt-1.5 text-xs leading-5 text-[#83768f]">Moved your camera or chair? Look at the camera and recalibrate to reset your normal starting position. Your session history stays.</p>
     </div>, document.body)}
