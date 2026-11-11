@@ -477,8 +477,14 @@ def enhance_selection(
 audience, tone, and style. Return the actual words the presenter will say aloud.
 You may restructure sentences, correct grammar and awkward wording, and add brief
 clarifications that help the audience understand. Preserve the user's intended message
-and factual claims, while improving how they are expressed. Use the surrounding text
-and slide to understand the passage, keeping the rewrite within the selected material.
+when it fits the current slide. If the selected passage clearly contradicts the slide's
+facts or discusses unrelated material, you may substantially rewrite it using the current
+slide's supported content. Do not merely polish a clear mismatch. Keep legitimate
+transitions, speaker opinions, and relevant closing remarks; a difference in wording or
+slide role alone does not make them wrong. Do not invent missing facts or import other
+slides' content. When the slide does not establish a correction, preserve the meaning
+rather than guessing. Use the untouched surrounding text for continuity, and rewrite
+only the selected passage. The result is a proposal the user reviews before accepting.
 Apply these settings only within the selected text:
 Target tone: {tone}. {TONE_RULES[tone]}
 Style: {style}. {STYLE_RULES[style]}
@@ -496,7 +502,7 @@ UNTOUCHED SURROUNDING TEXT (context only):
 {json.dumps(surrounding_text or {}, ensure_ascii=False)}
 SELECTION BOUNDARIES:
 {json.dumps(selection_boundaries or {}, ensure_ascii=False)}
-CURRENT SLIDE (context for meaning):
+CURRENT SLIDE (source for relevance and supported factual corrections):
 {_writing_source(slide)}
 
 Return JSON: {{"replacement_paragraphs":["replacement spoken words"]}}"""
