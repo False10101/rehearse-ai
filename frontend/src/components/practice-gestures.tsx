@@ -60,45 +60,40 @@ const momentKey = (event: Event) => `${event.type}:${event.start_seconds}:${even
 
 
 function GestureReview({ event, token }: { event: Event; token: string | null }) {
-  type Replay = { url: string; video: boolean; timestamp: number; label: string };
-  const [replay, setReplay] = useState<Replay | null>(null);
-  const [incoming, setIncoming] = useState<Replay | null>(null);
-  const [loading, setLoading] = useState(false);
-  const urls = useRef(new Map<string, string>());
-  const player = useRef<HTMLVideoElement | null>(null);
+  const [source, setSource] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const coaching = event.coaching;
   const path = event.evidence_video_url || event.evidence_image_url;
   useEffect(() => {
-    const cache = urls.current;
-    return () => { for (const url of cache.values()) URL.revokeObjectURL(url); cache.clear(); };
-  }, [token]);
-  useEffect(() => {
-    setIncoming(null); setFailed(false);
-    player.current?.pause();
-    if (!path || !token) { setReplay(null); setLoading(false); return; }
-    setLoading(true);
     const controller = new AbortController();
-    const next = (url: string) => setIncoming({ url, video: Boolean(event.evidence_video_url), timestamp: event.start_seconds, label: event.label });
-    const cached = urls.current.get(path);
-    if (cached) { next(cached); return; }
-    void fetch((process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000") + path, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
-      .then(response => { if (!response.ok) throw new Error(); return response.blob(); })
-      .then(blob => { if (!controller.signal.aborted) { const url = URL.createObjectURL(blob); urls.current.set(path, url); next(url); } })
-      .catch(() => { if (!controller.signal.aborted) { setFailed(true); setLoading(false); } });
-    return () => controller.abort();
-  }, [path, token, event.evidence_video_url, event.start_seconds, event.label]);
-  const ready = () => { if (incoming) { setReplay(incoming); setIncoming(null); setLoading(false); } };
-  const mediaFailed = () => { setIncoming(null); setLoading(false); setFailed(true); };
+    let objectUrl: string | null = null;
+    setSource(null); setReady(false); setFailed(false);
+    if (path && token) {
+      void fetch((process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000") + path, {
+        headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+      })
+        .then(response => { if (!response.ok) throw new Error(); return response.blob(); })
+        .then(blob => {
+          if (controller.signal.aborted) return;
+          objectUrl = URL.createObjectURL(blob);
+          setSource(objectUrl);
+        })
+        .catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    }
+    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [path, token]);
+  const loading = Boolean(path && token && !ready && !failed);
   return <article className="practice-gesture-card">
     <div className="practice-gesture-evidence"><p className="practice-eyebrow">Replay the moment · {time(event.start_seconds)}</p>
-    <div className="practice-gesture-media" aria-busy={loading}>{[replay, incoming].filter((item): item is Replay => item !== null).map((item, index) => {
-      const pending = index === (replay ? 1 : 0) && incoming !== null;
-      return <div key={`${item.url}-${pending && replay?.url === item.url ? "reload" : "media"}`} className={`practice-gesture-layer${pending ? " practice-gesture-preload" : ""}`} aria-hidden={pending}>{item.video
-        ? <video ref={pending ? undefined : player} src={item.url} controls={!pending && !loading && !failed} playsInline preload="auto" onLoadedData={pending ? ready : undefined} onError={pending ? mediaFailed : undefined} tabIndex={pending ? -1 : 0} aria-label={`Review gesture at ${time(item.timestamp)}`} />
-        : <img src={item.url} alt={pending ? "" : `Detected ${item.label.toLowerCase()} at ${time(item.timestamp)}`} onLoad={pending ? ready : undefined} onError={pending ? mediaFailed : undefined} />}</div>;
-    })}
-      {(loading || failed || !path) && <p className="practice-gesture-load-status" role="status">{failed ? "The replay could not be loaded. Refresh to try again." : path ? "Loading replay…" : "The replay for this moment is unavailable."}</p>}
+    <div className="practice-gesture-media" aria-busy={loading}>
+      {source && !failed && <div className={`practice-gesture-layer${!ready ? " practice-gesture-preload" : ""}`} aria-hidden={!ready}>
+        {event.evidence_video_url
+          ? <video src={source} controls={ready} playsInline preload="auto" onLoadedData={() => setReady(true)} onError={() => setFailed(true)} tabIndex={ready ? 0 : -1} aria-label={`Review gesture at ${time(event.start_seconds)}`} />
+          : <img src={source} alt={`Detected ${event.label.toLowerCase()} at ${time(event.start_seconds)}`} onLoad={() => setReady(true)} onError={() => setFailed(true)} />}
+      </div>}
+      {loading && <div className="practice-gesture-loading" role="status"><span className="practice-gesture-spinner" aria-hidden="true" /><span className="sr-only">Loading replay…</span></div>}
+      {(failed || !path || !token) && <p className="practice-gesture-load-status" role="status">{failed ? "The replay could not be loaded. Refresh to try again." : "The replay for this moment is unavailable."}</p>}
     </div>
       <p className="practice-gesture-caption">{event.evidence_video_url ? "Silent replay with the surrounding context." : "A captured moment from your recording."}</p>
     </div>
@@ -175,7 +170,7 @@ export function PracticeGestures({ events, token, tracking, duration = 0 }: { ev
         </div>
       </div>
       <p className="practice-gesture-timeline-note">Selected moment · replay and coaching below</p>
-      <GestureReview event={active} token={token} />
+      <GestureReview key={`${momentKey(active)}:${active.evidence_video_url || active.evidence_image_url}:${token}`} event={active} token={token} />
     </> : <p className="practice-empty">{tracking?.status === "reliable" ? "No gesture issues were identified in this recording." : "For clearer gesture feedback, record with your face, arms and torso in view."}</p>}
   </section>;
 }

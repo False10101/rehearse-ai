@@ -122,3 +122,7 @@
 .practice-filler-breakdown tbody th { font-weight:600; color:var(--practice-text); width:22%; }
 .practice-filler-breakdown td { color:var(--practice-muted); font-variant-numeric:tabular-nums; }
 .practice-filler-breakdown td:last-child { overflow-wrap:anywhere; }
+
+.practice-gesture-loading { position:absolute; inset:0; display:grid; place-items:center; background:#f3f1f7; }
+.practice-gesture-spinner { width:30px; height:30px; border:3px solid #ded8ed; border-top-color:#7560c3; border-radius:50%; animation:practice-replay-spin .8s linear infinite; }
+@keyframes practice-replay-spin { to { transform:rotate(360deg); } }
