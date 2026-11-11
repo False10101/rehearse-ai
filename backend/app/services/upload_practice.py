@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
@@ -38,7 +39,7 @@ from app.services.storage import storage_path, upload_practice_evidence_key
 
 logger = logging.getLogger(__name__)
 
-GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 RELIABLE_FILLER_PHRASES = (
     "um",
     "uh",
@@ -423,24 +424,25 @@ def extract_audio(video_path: Path, audio_path: Path) -> bool:
 
 def transcribe_audio(audio_path: Path) -> dict[str, Any]:
     settings = get_settings()
-    if not settings.groq_api_key:
+    if not settings.openrouter_api_key:
         raise UploadPracticeError(
             "SPEECH_PROVIDER_NOT_CONFIGURED",
-            "Speech analysis is not configured. Add the Groq API key and retry.",
+            "Speech analysis is not configured. Add the OpenRouter API key and retry.",
         )
     try:
         with audio_path.open("rb") as audio_file:
             response = requests.post(
-                GROQ_TRANSCRIPTION_URL,
-                headers={"Authorization": f"Bearer {settings.groq_api_key}"},
-                data={
-                    "model": settings.upload_practice_whisper_model,
+                TRANSCRIPTION_URL,
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+                json={
+                    "model": settings.upload_practice_transcription_model,
+                    "input_audio": {"data": base64.b64encode(audio_file.read()).decode("ascii"),
+                                    "format": "wav"},
                     "response_format": "verbose_json",
-                    "timestamp_granularities[]": ["word", "segment"],
-                    "temperature": "0",
+                    "timestamp_granularities": ["word", "segment"],
+                    "temperature": 0,
                     "language": "en",
                 },
-                files={"file": ("rehearsal.wav", audio_file, "audio/wav")},
                 timeout=240,
             )
             response.raise_for_status()

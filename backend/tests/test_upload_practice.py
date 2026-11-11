@@ -98,8 +98,8 @@ def test_transcription_requests_word_and_segment_timestamps(monkeypatch, tmp_pat
         upload_practice,
         "get_settings",
         lambda: SimpleNamespace(
-            groq_api_key="test-key",
-            upload_practice_whisper_model="test-model",
+            openrouter_api_key="test-key",
+            upload_practice_transcription_model="elevenlabs/scribe-v2",
         ),
     )
 
@@ -111,14 +111,17 @@ def test_transcription_requests_word_and_segment_timestamps(monkeypatch, tmp_pat
             return {"text": "Hello", "words": [{"word": "Hello", "start": 0, "end": 1}]}
 
     def request(*args, **kwargs):
-        seen.update(kwargs["data"])
+        assert args[0] == "https://openrouter.ai/api/v1/audio/transcriptions"
+        seen.update(kwargs["json"])
         return Response()
 
     monkeypatch.setattr(upload_practice.requests, "post", request)
     source = tmp_path / "speech.wav"
     source.touch()
     upload_practice.transcribe_audio(source)
-    assert seen["timestamp_granularities[]"] == ["word", "segment"]
+    assert seen["timestamp_granularities"] == ["word", "segment"]
+    assert seen["model"] == "elevenlabs/scribe-v2"
+    assert seen["input_audio"]["format"] == "wav"
 
 
 def test_slow_passage_is_not_automatically_coached_as_a_mistake():

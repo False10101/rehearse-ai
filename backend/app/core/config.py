@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     slide_analysis_batch_size: int = 3
     transcript_generation_workers: int = 4
     upload_practice_pose_model: str = "yolo11n-pose.pt"
-    upload_practice_whisper_model: str = "whisper-large-v3-turbo"
+    upload_practice_transcription_model: str = "elevenlabs/scribe-v2"
     upload_practice_sensitive_terms: str = ""
     upload_practice_max_evidence_frames: int = 12
     live_target_fps: float = 15.0
