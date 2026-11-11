@@ -49,9 +49,9 @@ export function TranscriptBulkDrawer({ slides, range, replaceExisting, settings,
           <h3 className="mb-3 mt-0 text-sm font-semibold">Existing scripts</h3>
           <label className={`transcript-replace-option flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${replaceExisting ? "border-[#dcd3f7] bg-[#faf8ff]" : "border-[#e8e3ee] bg-[#faf9fc]"}`}>
             <input type="checkbox" disabled={busy} checked={replaceExisting} onChange={(event) => onReplaceExisting(event.target.checked)} className={`mt-0.5 h-4 w-4 shrink-0 accent-[#6850db] ${focus}`} />
-            <span><span className="block text-[0.8125rem] font-semibold leading-5">Include slides that already have a script</span><span className="mt-1.5 block text-xs leading-5 text-[#8a8394]">Replace AI-generated and manually written scripts in this range. Their saved versions stay in Version history.</span></span>
+            <span><span className="block text-[0.8125rem] font-semibold leading-5">Include slides that already have a script</span><span className="mt-1.5 block text-xs leading-5 text-[#8a8394]">Generate replacements for AI-generated and manually written scripts. Review and accept or decline each one before it changes your saved script.</span></span>
           </label>
-          <p className="mb-0 mt-3 text-xs leading-5 text-[#8a8394]">{replaceExisting ? "All selected slides will receive a new script." : "Only empty slides will be generated. Existing scripts stay unchanged."}</p>
+          <p className="mb-0 mt-3 text-xs leading-5 text-[#8a8394]">{replaceExisting ? "Empty slides save automatically. Existing scripts get a replacement draft to review." : "Only empty slides will be generated. Existing scripts stay unchanged."}</p>
         </section>
         <section className="mt-7 border-t border-[#eeecf2] pt-6">
           <h3 className="mb-3 mt-0 text-sm font-semibold">Generation settings</h3>
@@ -60,7 +60,7 @@ export function TranscriptBulkDrawer({ slides, range, replaceExisting, settings,
         </section>
         <div className="mt-7 rounded-xl border border-[#e7e0f7] bg-[#faf8ff] px-4 py-4" aria-live="polite">
           <p className="m-0 text-sm font-semibold text-[#6546ce]">{count ? `${count} ${count === 1 ? "slide" : "slides"} to generate` : "No empty slides in this range"}</p>
-          <p className="mb-0 mt-1.5 text-xs leading-5 text-[#8a7d9f]">{replaceExisting ? `${empty} empty · ${existing} existing ${existing === 1 ? "script" : "scripts"} replaced` : `${empty} empty · ${existing} existing ${existing === 1 ? "script" : "scripts"} kept`}</p>
+          <p className="mb-0 mt-1.5 text-xs leading-5 text-[#8a7d9f]">{replaceExisting ? `${empty} empty · ${existing} existing ${existing === 1 ? "script" : "scripts"} to review` : `${empty} empty · ${existing} existing ${existing === 1 ? "script" : "scripts"} kept`}</p>
         </div>
       </div>
       <footer className="shrink-0 border-t border-[#eeecf2] px-7 py-5">

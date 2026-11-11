@@ -331,3 +331,22 @@ class Job(TimestampedModel, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TranscriptGenerationDraft(Base):
+    """Generated replacement held separately until its owner accepts it."""
+
+    __tablename__ = "transcript_generation_drafts"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    slide_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("slides.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    base_transcript_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    base_revision: Mapped[int | None] = mapped_column(Integer)
+    before_text: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_result: Mapped[str] = mapped_column(Text, nullable=False)
+    settings: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

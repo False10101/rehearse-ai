@@ -25,6 +25,7 @@ from app.db.models import (
     TranscriptParagraph,
     TranscriptRevision,
     TranscriptVersion,
+    TranscriptGenerationDraft,
     User,
 )
 
@@ -57,6 +58,7 @@ def setup(monkeypatch):
         TranscriptParagraph,
         TranscriptRevision,
         TranscriptVersion,
+        TranscriptGenerationDraft,
         TranscriptComplexTerm,
         SlideVocabularyUpgrade,
     ]
@@ -254,6 +256,10 @@ def test_generation_saves_speech_and_feedback_from_one_provider_response(setup, 
         c.presentation.id, api.GenerateSlideRequest(slide_number=1), c.session, c.user
     )
     assert len(calls) == 1
+    assert result.generation_draft is not None
+    assert result.generation_draft.after == ["Our SME uses task ownership to coordinate work."]
+    assert [p.current for p in result.paragraphs] == [p.current_text for p in c.parts]
+    result = api.accept_generation_draft(c.presentation.id, result.generation_draft.id, c.session, c.user)
     assert [p.current for p in result.paragraphs] == [
         "Our SME uses task ownership to coordinate work."
     ]
@@ -1136,6 +1142,12 @@ def test_bulk_replace_existing_generates_written_slides_and_preserves_history(se
     c.presentation = c.session.get(Presentation, presentation_id)
     c.slide = c.session.get(Slide, slide_id)
     c.user = c.session.get(User, user_id)
+    pending = api._pending_generation_drafts(c.session, c.presentation)
+    assert len(pending) == 1
+    assert pending[0].before == original
+    assert pending[0].after == ["New script 1."]
+    assert [p.current_text for p in api._paragraphs(c.session, api._latest_by_slide(c.session, presentation_id)[0][slide_id].id)] == original
+    api.accept_generation_draft(presentation_id, pending[0].id, c.session, c.user)
     history = versions(c)
     assert history[0].paragraphs == ["New script 1."]
     assert history[1].paragraphs == original
@@ -1193,3 +1205,164 @@ def test_bulk_replace_existing_is_opt_in_and_forwarded_to_worker(setup):
         c.user,
     )
     assert tasks.tasks[0].args[-1] is True
+
+
+def generation_draft(c, monkeypatch, text="A generated replacement."):
+    monkeypatch.setattr(api, "generate_script", lambda *_a, **_k: {"paragraphs": [text]})
+    return api.generate_slide_transcript(
+        c.presentation.id, api.GenerateSlideRequest(slide_number=1), c.session, c.user
+    ).generation_draft
+
+
+def test_generation_decline_preserves_script_and_history_and_persists_pending(setup, monkeypatch):
+    c = setup
+    original = [p.current_text for p in c.parts]
+    initial_versions = versions(c)
+    draft = generation_draft(c, monkeypatch)
+    assert draft.before == original
+    assert versions(c) == initial_versions
+    c.session.expire_all()
+    assert api._pending_generation_drafts(c.session, c.presentation)[0].id == draft.id
+    api.decline_generation_draft(c.presentation.id, draft.id, c.session, c.user)
+    assert api._pending_generation_drafts(c.session, c.presentation) == []
+    assert versions(c) == initial_versions
+    assert [p.current_text for p in c.parts] == original
+
+
+def test_generation_accept_exact_draft_once_without_another_provider_call(setup, monkeypatch):
+    c = setup
+    draft = generation_draft(c, monkeypatch)
+    monkeypatch.setattr(api, "generate_script", lambda *_a, **_k: pytest.fail("Accept called AI"))
+    result = api.accept_generation_draft(c.presentation.id, draft.id, c.session, c.user)
+    assert [p.current for p in result.paragraphs] == draft.after
+    assert api._pending_generation_drafts(c.session, c.presentation) == []
+    assert versions(c)[0].change_type == "generated"
+    for action in (api.accept_generation_draft, api.decline_generation_draft):
+        with pytest.raises(HTTPException) as error:
+            action(c.presentation.id, draft.id, c.session, c.user)
+        assert error.value.status_code == 409
+
+
+def test_generation_accept_rejects_newer_edit_but_can_decline_stale_draft(setup, monkeypatch):
+    c = setup
+    draft = generation_draft(c, monkeypatch)
+    c.parts[0].current_text = "Newer saved edit."
+    c.transcript.revision += 1
+    c.session.commit()
+    assert api._pending_generation_drafts(c.session, c.presentation)[0].stale
+    with pytest.raises(HTTPException) as error:
+        api.accept_generation_draft(c.presentation.id, draft.id, c.session, c.user)
+    assert error.value.status_code == 409
+    assert c.parts[0].current_text == "Newer saved edit."
+    api.decline_generation_draft(c.presentation.id, draft.id, c.session, c.user)
+    assert c.parts[0].current_text == "Newer saved edit."
+
+
+def test_generation_draft_decisions_require_owner_and_matching_presentation(setup, monkeypatch):
+    c = setup
+    draft = generation_draft(c, monkeypatch)
+    stranger = SimpleNamespace(id=uuid.uuid4())
+    for action in (api.accept_generation_draft, api.decline_generation_draft):
+        with pytest.raises(HTTPException) as error:
+            action(c.presentation.id, draft.id, c.session, stranger)
+        assert error.value.status_code == 404
+    other = Presentation(user_id=c.user.id, title="Other", original_filename="other.pptx", status="completed")
+    c.session.add(other); c.session.commit()
+    with pytest.raises(HTTPException) as error:
+        api.accept_generation_draft(other.id, draft.id, c.session, c.user)
+    assert error.value.status_code == 404
+
+
+def test_generation_of_empty_slide_still_saves_automatically(setup, monkeypatch):
+    c = setup
+    c.session.add(Slide(presentation_id=c.presentation.id, slide_number=2, title="New", extracted_content={}))
+    c.session.commit()
+    monkeypatch.setattr(api, "generate_script", lambda *_a, **_k: {"paragraphs": ["First script."]})
+    result = api.generate_slide_transcript(c.presentation.id, api.GenerateSlideRequest(slide_number=2), c.session, c.user)
+    assert result.generation_draft is None
+    assert [p.current for p in result.paragraphs] == ["First script."]
+
+
+def test_edit_saved_during_generation_never_gets_overwritten(setup, monkeypatch):
+    c = setup
+    def generate(*_a, **_k):
+        c.parts[0].current_text = "Saved while generation was running."
+        c.transcript.revision += 1
+        c.session.commit()
+        return {"paragraphs": ["Generated from older state."]}
+    monkeypatch.setattr(api, "generate_script", generate)
+    result = api.generate_slide_transcript(c.presentation.id, api.GenerateSlideRequest(slide_number=1), c.session, c.user)
+    assert result.generation_draft.stale
+    assert result.paragraphs[0].current == "Saved while generation was running."
+
+
+def test_bulk_accept_and_decline_are_independent_and_empty_slide_is_saved(setup, monkeypatch):
+    c = setup
+    original = [p.current_text for p in c.parts]
+    c.slide.extracted_content = {"num": 1}
+    c.session.commit()
+    presentation_id, user_id = c.presentation.id, c.user.id
+    _prepare_bulk_case(c, [2, 3])
+    slide2 = c.session.scalar(select(Slide).where(Slide.presentation_id == presentation_id, Slide.slide_number == 2))
+    saved2 = api._create_human_draft(c.session, c.presentation, slide2)
+    c.session.flush()
+    api._paragraphs(c.session, saved2.id)[0].current_text = "Keep second script."
+    slide2_id = slide2.id
+    c.session.commit()
+    monkeypatch.setattr(api, "generate_script", lambda slide, **_k: {"paragraphs": [f"Draft {slide['num']}."]})
+    monkeypatch.setattr(api, "get_session_factory", lambda: lambda: c.session)
+    api.run_generate_all_transcripts(presentation_id, 75, "informative", "natural", 1, 3, replace_existing=True)
+    c.presentation = c.session.get(Presentation, presentation_id); c.user = c.session.get(User, user_id)
+    pending = api._pending_generation_drafts(c.session, c.presentation)
+    assert [d.slide_number for d in pending] == [1, 2]
+    api.accept_generation_draft(presentation_id, pending[0].id, c.session, c.user)
+    api.decline_generation_draft(presentation_id, pending[1].id, c.session, c.user)
+    latest, _ = api._latest_by_slide(c.session, presentation_id)
+    assert [p.current_text for p in api._paragraphs(c.session, latest[slide2_id].id)] == ["Keep second script."]
+    third = c.session.scalar(select(Slide).where(Slide.presentation_id == presentation_id, Slide.slide_number == 3))
+    assert [p.current_text for p in api._paragraphs(c.session, latest[third.id].id)] == ["Draft 3."]
+    assert pending[0].before == original
+
+
+def test_generation_review_routes_expose_pending_and_apply_decision_through_http(setup, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    c = setup
+    monkeypatch.setattr(api, "generate_script", lambda *_a, **_k: {"paragraphs": ["Proposed full script."]})
+    app = FastAPI(); app.include_router(api.router)
+    app.dependency_overrides[api.get_db_session] = lambda: c.session
+    app.dependency_overrides[api.authenticated_user] = lambda: c.user
+    base = f"/api/v1/presentations/{c.presentation.id}/transcript"
+    with TestClient(app) as client:
+        result = client.post(f"{base}/generate", json={"slide_number": 1})
+        assert result.status_code == 200
+        draft = result.json()["generation_draft"]
+        assert draft["after"] == ["Proposed full script."]
+        pending = client.get(base).json()["pending_generation_drafts"]
+        assert pending[0]["id"] == draft["id"]
+        accepted = client.post(f"{base}/generation-drafts/{draft['id']}/accept")
+        assert accepted.status_code == 200
+        assert accepted.json()["paragraphs"][0]["current"] == "Proposed full script."
+        assert client.get(base).json()["pending_generation_drafts"] == []
+
+
+def test_bulk_partial_failure_retains_successful_replacement_draft(setup, monkeypatch):
+    c = setup
+    c.slide.extracted_content = {"num": 1}; c.session.commit()
+    presentation_id, user_id = c.presentation.id, c.user.id
+    job_id = _prepare_bulk_case(c, [2])
+    def generate(slide, **_kwargs):
+        if slide["num"] == 2:
+            raise RuntimeError("Provider unavailable")
+        return {"paragraphs": ["Keep this completed draft."]}
+    monkeypatch.setattr(api, "generate_script", generate)
+    monkeypatch.setattr(api, "get_session_factory", lambda: lambda: c.session)
+    api.run_generate_all_transcripts(presentation_id, 75, "auto", "natural", 1, 2, replace_existing=True)
+    presentation = c.session.get(Presentation, presentation_id)
+    assert c.session.get(Job, job_id).status == "failed"
+    pending = api._pending_generation_drafts(c.session, presentation)
+    assert len(pending) == 1
+    assert pending[0].after == ["Keep this completed draft."]
+    current, _ = api._latest_by_slide(c.session, presentation_id)
+    original = next(iter(current.values()))
+    assert api._paragraphs(c.session, original.id)[0].current_text == "Prefix hey team suffix"

@@ -28,6 +28,7 @@ from app.db.models import (
     TranscriptParagraph,
     TranscriptRevision,
     TranscriptVersion,
+    TranscriptGenerationDraft,
 )
 from app.db.session import get_db_session, get_session_factory
 from app.services.processing_diagnostics import log_processing_state
@@ -76,7 +77,21 @@ class ParagraphResponse(BaseModel):
     current: str
 
 
+class GenerationDraftResponse(BaseModel):
+    id: uuid.UUID
+    slide_number: int
+    title: str | None
+    before: list[str]
+    after: list[str]
+    tone: str
+    style: str
+    audience_level: str
+    duration_seconds: int
+    stale: bool = False
+
+
 class SlideTranscriptResponse(BaseModel):
+    generation_draft: GenerationDraftResponse | None = None
     slide_number: int
     title: str | None
     image_url: str | None
@@ -96,6 +111,7 @@ class SlideTranscriptResponse(BaseModel):
 
 
 class TranscriptResponse(BaseModel):
+    pending_generation_drafts: list[GenerationDraftResponse] = []
     preparation_progress: int | None = None
     preparation_status: str | None = None
     presentation_id: uuid.UUID
@@ -441,6 +457,7 @@ def _response(session: Session, presentation: Presentation) -> TranscriptRespons
     if bulk_job is not None:
         log_processing_state(presentation, bulk_job, event="transcript_bulk_status_response")
     return TranscriptResponse(
+        pending_generation_drafts=_pending_generation_drafts(session, presentation),
         presentation_id=presentation.id,
         preparation_progress=preparation_job.progress_percent if preparation_job else None,
         preparation_status=preparation_job.status if preparation_job else None,
@@ -608,6 +625,86 @@ def _neighboring_script_context(
     return contexts
 
 
+def _generation_draft_response(session, draft, slide, latest=None):
+    settings = json.loads(draft.settings)
+    if latest is None:
+        latest, _ = _latest_by_slide(session, slide.presentation_id)
+    current = latest.get(slide.id)
+    current_version = (current.id, current.revision) if current else (None, None)
+    return GenerationDraftResponse(
+        id=draft.id, slide_number=slide.slide_number, title=slide.title,
+        before=json.loads(draft.before_text),
+        after=json.loads(draft.generated_result)["paragraphs"],
+        stale=current_version != (draft.base_transcript_id, draft.base_revision),
+        **settings,
+    )
+
+
+def _pending_generation_drafts(session, presentation):
+    rows = session.execute(
+        select(TranscriptGenerationDraft, Slide)
+        .join(Slide, Slide.id == TranscriptGenerationDraft.slide_id)
+        .where(Slide.presentation_id == presentation.id, TranscriptGenerationDraft.status == "pending")
+        .order_by(Slide.slide_number, TranscriptGenerationDraft.created_at)
+    ).all()
+    latest, _ = _latest_by_slide(session, presentation.id)
+    return [_generation_draft_response(session, draft, slide, latest) for draft, slide in rows]
+
+
+def _stage_generation(session, slide, result, settings, base, before):
+    draft = TranscriptGenerationDraft(
+        slide_id=slide.id, base_transcript_id=base[0], base_revision=base[1],
+        before_text=json.dumps(before, ensure_ascii=False),
+        generated_result=json.dumps(result, ensure_ascii=False),
+        settings=json.dumps(settings), status="pending",
+    )
+    session.add(draft)
+    session.flush()
+    return draft
+
+
+@router.post("/generation-drafts/{draft_id}/accept", response_model=SlideTranscriptResponse)
+def accept_generation_draft(presentation_id: uuid.UUID, draft_id: uuid.UUID,
+                            session: Session = Depends(get_db_session), user=Depends(authenticated_user)):
+    presentation = owned_presentation(session, user.id, presentation_id)
+    draft = session.get(TranscriptGenerationDraft, draft_id)
+    slide = session.get(Slide, draft.slide_id) if draft else None
+    if not slide or slide.presentation_id != presentation.id:
+        raise HTTPException(status_code=404, detail="Generated draft not found.")
+    _lock_slide(session, slide)
+    session.refresh(draft, with_for_update=True)
+    if draft.status != "pending":
+        raise HTTPException(status_code=409, detail="This draft has already been reviewed.")
+    latest, _ = _latest_by_slide(session, presentation.id)
+    current = latest.get(slide.id)
+    version = (current.id, current.revision) if current else (None, None)
+    if version != (draft.base_transcript_id, draft.base_revision):
+        raise HTTPException(status_code=409, detail="This script changed after generation. Decline this draft and generate a new one.")
+    settings = json.loads(draft.settings)
+    transcript = _save_ai_slide_transcript(session, presentation, slide,
+                                         json.loads(draft.generated_result), **settings)
+    draft.status = "accepted"
+    session.commit()
+    return _response_for_slide(session, slide, transcript, "ai-gen", presentation)
+
+
+@router.post("/generation-drafts/{draft_id}/decline")
+def decline_generation_draft(presentation_id: uuid.UUID, draft_id: uuid.UUID,
+                             session: Session = Depends(get_db_session), user=Depends(authenticated_user)):
+    presentation = owned_presentation(session, user.id, presentation_id)
+    draft = session.get(TranscriptGenerationDraft, draft_id)
+    slide = session.get(Slide, draft.slide_id) if draft else None
+    if not slide or slide.presentation_id != presentation.id:
+        raise HTTPException(status_code=404, detail="Generated draft not found.")
+    _lock_slide(session, slide)
+    session.refresh(draft, with_for_update=True)
+    if draft.status != "pending":
+        raise HTTPException(status_code=409, detail="This draft has already been reviewed.")
+    draft.status = "declined"
+    session.commit()
+    return {"status": "declined"}
+
+
 def _create_ai_slide_transcript(
     session: Session,
     presentation: Presentation,
@@ -767,6 +864,7 @@ def run_generate_all_transcripts(
         # Snapshot source data and saved continuity on this thread. Workers only
         # call the provider; SQLAlchemy sessions and ORM objects stay here.
         saved_scripts = []
+        starting_text = {}
         written_slide_ids = set()
         starting_revisions = {
             slide_id: (script.id, script.revision) for slide_id, script in latest.items()
@@ -782,6 +880,7 @@ def run_generate_all_transcripts(
                 if existing
                 else []
             )
+            starting_text[slide.id] = parts
             if parts:
                 written_slide_ids.add(slide.id)
                 saved_scripts.append(
@@ -857,16 +956,18 @@ def run_generate_all_transcripts(
                         if (replace_existing and unchanged) or (not replace_existing and not has_content):
                             with session.begin_nested():
                                 slide = session.get(Slide, slide_id)
-                                _save_ai_slide_transcript(
-                                    session,
-                                    presentation,
-                                    slide,
-                                    result,
-                                    duration_seconds,
-                                    tone,
-                                    style,
-                                    audience_level,
-                                )
+                                if slide_id in written_slide_ids:
+                                    _stage_generation(
+                                        session, slide, result,
+                                        dict(duration_seconds=duration_seconds, tone=tone,
+                                             style=style, audience_level=audience_level),
+                                        starting_revisions[slide_id], starting_text[slide_id],
+                                    )
+                                else:
+                                    _save_ai_slide_transcript(
+                                        session, presentation, slide, result, duration_seconds,
+                                        tone, style, audience_level,
+                                    )
                         job.progress_percent = round((completed + 1) / len(slides) * 100)
                         session.commit()
                         completed += 1
@@ -938,31 +1039,36 @@ def generate_slide_transcript(
         )
     )
     slide_index = slides.index(slide)
+    latest, _ = _latest_by_slide(session, presentation.id)
+    prior = latest.get(slide.id)
+    base = (prior.id, prior.revision) if prior else (None, None)
+    before = [p.current_text for p in _paragraphs(session, prior.id)] if prior else []
     try:
-        transcript = _create_ai_slide_transcript(
-            session,
-            presentation,
-            slide,
-            request.duration_seconds,
-            request.tone,
-            request.style,
-            slides[slide_index - 1] if slide_index else None,
-            slides[slide_index + 1] if slide_index + 1 < len(slides) else None,
-            slides,
-            audience_level=request.audience_level,
+        result = generate_script(
+            slide.extracted_content, request.duration_seconds, request.tone, request.style,
+            slides[slide_index - 1].extracted_content if slide_index else None,
+            slides[slide_index + 1].extracted_content if slide_index + 1 < len(slides) else None,
+            [s.extracted_content for s in slides], audience_level=request.audience_level,
+            neighboring_scripts=_neighboring_script_context(session, presentation, slide),
         )
     except Exception as error:
-        logger.exception(
-            "Transcript generation failed for presentation %s slide %s",
-            presentation.id,
-            slide.slide_number,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(error) if isinstance(error, ProviderRequestError)
-            else "Script generation could not finish. Please retry.",
-        ) from error
-
+        logger.exception("Transcript generation failed presentation=%s slide=%s", presentation.id, slide.slide_number)
+        raise HTTPException(status_code=502, detail=str(error) if isinstance(error, ProviderRequestError)
+                            else "Script generation could not finish. Please retry.") from error
+    _lock_slide(session, slide)
+    session.expire_all()
+    latest, _ = _latest_by_slide(session, presentation.id)
+    current = latest.get(slide.id)
+    current_version = (current.id, current.revision) if current else (None, None)
+    settings = dict(duration_seconds=request.duration_seconds, tone=request.tone,
+                    style=request.style, audience_level=request.audience_level)
+    if any(p.strip() for p in before) or current_version != base:
+        draft = _stage_generation(session, slide, result, settings, base, before)
+        session.commit()
+        response = _response_for_slide(session, slide, current, session.get(PresentationTranscript, current.presentation_transcript_id).mode if current else None, presentation)
+        response.generation_draft = _generation_draft_response(session, draft, slide)
+        return response
+    transcript = _save_ai_slide_transcript(session, presentation, slide, result, **settings)
     session.commit()
     return _response_for_slide(session, slide, transcript, "ai-gen", presentation)
 

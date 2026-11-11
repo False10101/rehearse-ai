@@ -3,6 +3,7 @@
 import "./transcript.css";
 import "@/components/transcript-dialogs.css";
 
+import { TranscriptGenerationReview, type GenerationDraft } from "@/components/transcript-generation-review";
 import { TranscriptReview, type EnhancementPreview } from "@/components/transcript-review";
 import { TranscriptVersions, type TranscriptVersion } from "@/components/transcript-versions";
 import { TranscriptBulkDrawer } from "@/components/transcript-bulk-drawer";
@@ -25,6 +26,7 @@ type AudienceLevel = "beginner" | "general" | "specialist";
 type Mode = "ai-gen" | "human-enhance";
 type Paragraph = { id: string; position: number; original: string | null; current: string };
 type TranscriptSlide = {
+  generation_draft?: GenerationDraft | null;
   slide_number: number; title: string | null; image_url: string | null; transcript_id: string | null;
   revision: number | null; mode: string | null; paragraphs: Paragraph[];
   requested_tone: Tone | null; requested_style: Style | null; requested_audience_level?: AudienceLevel | null; requested_duration_seconds: 45 | 75 | 105 | null;
@@ -34,9 +36,9 @@ type TranscriptSlide = {
   tone_check: { classification: string | null; confidence: number | null; rationale: string | null } | null;
   vocabulary_upgrades: Array<{ original: string; suggested: string; reason: string }>;
 };
-type TranscriptResponse = { preparation_progress: number | null; preparation_status: string | null; presentation_id: string; filename: string; status: string; processing_error_code: string | null; bulk_generation_status: string | null; bulk_generation_progress: number | null; bulk_generation_error_code?: string | null; slide_count: number | null; slides: TranscriptSlide[] };
+type TranscriptResponse = { pending_generation_drafts?: GenerationDraft[]; preparation_progress: number | null; preparation_status: string | null; presentation_id: string; filename: string; status: string; processing_error_code: string | null; bulk_generation_status: string | null; bulk_generation_progress: number | null; bulk_generation_error_code?: string | null; slide_count: number | null; slides: TranscriptSlide[] };
 type TextSelection = { text: string; start: { paragraph_id: string; offset: number }; end: { paragraph_id: string; offset: number } };
-type PendingAction = { type: "slide"; index: number } | { type: "route"; href: string } | { type: "generate-slide" };
+type PendingAction = { type: "slide"; index: number } | { type: "route"; href: string };
 type SlideRange = { start: number; end: number };
 
 function wordCount(paragraphs: Paragraph[]) { return paragraphs.flatMap((paragraph) => paragraph.current.trim().split(/\s+/)).filter(Boolean).length; }
@@ -87,6 +89,9 @@ export default function TranscriptEnhancerPage() {
   const [selection, setSelection] = useState<TextSelection | null>(null);
   const [review, setReview] = useState<{ preview: EnhancementPreview; request: { slide_transcript_id: string; base_revision: number; start: TextSelection["start"]; end: TextSelection["end"]; tone: Tone; style: Style; audience_level: AudienceLevel } } | null>(null);
   const [reviewError, setReviewError] = useState("");
+  const [generationReviewOpen, setGenerationReviewOpen] = useState(false);
+  const [generationReviewInitialId, setGenerationReviewInitialId] = useState<string | undefined>();
+  const [generationReviewError, setGenerationReviewError] = useState("");
   const [history, setHistory] = useState<TranscriptVersion[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -131,7 +136,8 @@ export default function TranscriptEnhancerPage() {
   useEffect(() => {
     if (bulkGenerationState === "tracking" && data?.bulk_generation_status === "completed") {
       setBulkGenerationState(null);
-      setActionNote("All slide scripts are ready.");
+      setActionNote("Generation finished. Review any pending replacements before accepting them.");
+      setGenerationReviewOpen(true);
     }
   }, [bulkGenerationState, data?.bulk_generation_status]);
 
@@ -222,6 +228,7 @@ export default function TranscriptEnhancerPage() {
   const requestRegeneration = async () => {
     if (!presentationId || !accessToken || !transcript) return;
     if (mode === "human-enhance" && (!selection || !transcript.transcript_id || !transcript.revision)) { setActionNote(transcript.transcript_id ? "Select text in the document before enhancing it." : "Generate this slide first, then select text to enhance."); return; }
+    if (mode === "ai-gen" && dirty && !(await saveScriptEdits())) return;
     setWorking(true); setActionNote("");
     try {
       if (mode === "ai-gen") {
@@ -230,7 +237,14 @@ export default function TranscriptEnhancerPage() {
         if (!response.ok) throw new Error(apiError(payload, "Script generation could not finish."));
         const updated = payload as TranscriptSlide;
         if (updated.slide_number !== transcript.slide_number) throw new Error("The server returned a script for the wrong slide. Nothing was replaced.");
-        replaceSlide(updated); setActionNote(`Script for slide ${updated.slide_number} generated and saved.`);
+        if (updated.generation_draft) {
+          const draft = updated.generation_draft;
+          setData(previous => previous ? { ...previous, pending_generation_drafts: [...(previous.pending_generation_drafts ?? []), draft] } : previous);
+          setGenerationReviewInitialId(draft.id); setGenerationReviewError(""); setGenerationReviewOpen(true);
+          setActionNote("New script ready to review. Your saved script is unchanged.");
+        } else {
+          replaceSlide(updated); setActionNote(`Script for slide ${updated.slide_number} generated and saved.`);
+        }
       } else {
         if (dirty) {
           const saved = await saveScriptEdits();
@@ -254,6 +268,24 @@ export default function TranscriptEnhancerPage() {
       }
     } catch (error) { setActionNote(error instanceof Error ? error.message : "The request could not finish."); }
     finally { setWorking(false); }
+  };
+
+  const decideGeneration = async (draft: GenerationDraft, decision: "accept" | "decline") => {
+    if (!presentationId || !accessToken || dirty) return;
+    setWorking(true); setGenerationReviewError("");
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/v1/presentations/${presentationId}/transcript/generation-drafts/${draft.id}/${decision}`, {
+        method: "POST", headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiError(payload, "Your decision could not be saved."));
+      if (decision === "accept") replaceSlide(payload as TranscriptSlide);
+      setData(previous => previous ? { ...previous, pending_generation_drafts: (previous.pending_generation_drafts ?? []).filter(d => d.id !== draft.id) } : previous);
+      setActionNote(decision === "accept" ? `New script for slide ${draft.slide_number} accepted and saved in Version history.` : `Draft for slide ${draft.slide_number} declined. Your script is unchanged.`);
+    } catch (error) {
+      setGenerationReviewError(error instanceof Error ? error.message : "Your decision could not be saved.");
+      await loadTranscript(true);
+    } finally { setWorking(false); }
   };
 
   const acceptEnhancement = async () => {
@@ -339,7 +371,6 @@ export default function TranscriptEnhancerPage() {
     void generateAllSlides();
   };
   const requestSlideGeneration = () => {
-    if (mode === "ai-gen" && dirty) { setPendingAction({ type: "generate-slide" }); return; }
     void requestRegeneration();
   };
   const confirmPendingAction = () => {
@@ -348,8 +379,6 @@ export default function TranscriptEnhancerPage() {
     setPendingAction(null);
     if (action.type === "slide") { activateSlide(action.index); return; }
     if (action.type === "route") { setDirty(false); router.push(action.href); return; }
-    setDirty(false);
-    void requestRegeneration();
   };
   useEffect(() => {
     if (!dirty) return;
@@ -358,9 +387,9 @@ export default function TranscriptEnhancerPage() {
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [dirty]);
 
-  const pendingActionTitle = pendingAction?.type === "generate-slide" ? "Regenerate this slide?" : "Discard unsaved edits?";
-  const pendingActionMessage = pendingAction?.type === "generate-slide" ? "This replaces the current slide script and discards your unsaved edits." : pendingAction?.type === "slide" ? "Switching slides will discard the edits you have not saved." : "Leaving this page will discard the edits you have not saved.";
-  const pendingActionConfirm = pendingAction?.type === "generate-slide" ? "Regenerate slide" : pendingAction?.type === "slide" ? "Discard & switch" : "Discard & leave";
+  const pendingActionTitle = "Discard unsaved edits?";
+  const pendingActionMessage = pendingAction?.type === "slide" ? "Switching slides will discard the edits you have not saved." : "Leaving this page will discard the edits you have not saved.";
+  const pendingActionConfirm = pendingAction?.type === "slide" ? "Discard & switch" : "Discard & leave";
 
   if (authLoading || loading) return <main className="grid h-dvh place-items-center bg-[#f7f7f9] text-sm font-semibold text-[#6e6c7b]">Loading transcript…</main>;
   if (!presentationId) return <DeckUpload mode="transcript" />;
@@ -384,6 +413,7 @@ export default function TranscriptEnhancerPage() {
         <section className="rounded-[10px] border border-[#e6e5eb] bg-white px-[0.9rem] py-[0.85rem]"><div className="flex items-center justify-between"><h3 className="m-0 text-[0.84rem] tracking-[-0.025em]">Script controls</h3><span className="text-[0.65rem] font-bold text-[#6550e5]">Editor</span></div><div className="mt-[0.72rem] grid grid-cols-2 gap-2 rounded-[8px] bg-[#f5f4f8] p-[0.18rem]"><button className={`rounded-[6px] px-[0.45rem] py-[0.48rem] text-[0.67rem] font-bold ${mode === "ai-gen" ? "bg-white text-[#5d49dd] shadow-[0_1px_3px_rgba(34,31,56,0.1)]" : "text-[#777583]"}`} type="button" onClick={() => setMode("ai-gen")}>AI generate</button><button className={`rounded-[6px] px-[0.45rem] py-[0.48rem] text-[0.67rem] font-bold ${mode === "human-enhance" ? "bg-white text-[#5d49dd] shadow-[0_1px_3px_rgba(34,31,56,0.1)]" : "text-[#777583]"}`} type="button" onClick={() => { setMode("human-enhance"); if (!transcript.transcript_id) void startHumanWriting(); }}>Write & enhance</button></div>
           {mode === "ai-gen" ? <div className="mt-[0.72rem] grid gap-[0.68rem]"><div><div className="mb-[0.36rem] flex items-center justify-between"><span className="text-[0.66rem] font-extrabold uppercase tracking-[0.055em] text-[#777583]">Duration</span><span className="text-[0.65rem] font-bold text-[#6550e5]">{duration} sec</span></div><div className="grid grid-cols-3 gap-1.5">{([{ value: 45, label: "Short" }, { value: 75, label: "Standard" }, { value: 105, label: "Detailed" }] as const).map((option) => <button className={`rounded-[6px] border px-[0.25rem] py-[0.43rem] text-[0.62rem] font-bold ${duration === option.value ? "border-[#a99dff] bg-[#f6f4ff] text-[#5e4ce0]" : "border-[#e5e4ea] bg-white text-[#777583]"}`} key={option.value} type="button" onClick={() => setDuration(option.value)}>{option.label}</button>)}</div></div><OptionGrid label="Tone" value={tone} options={["auto", "persuasive", "informative", "conversational"]} onChange={setTone} /><OptionGrid label="Style" value={style} options={["natural", "formal"]} onChange={setStyle} /></div> : <><div className={`mt-[0.72rem] rounded-[8px] border px-[0.7rem] py-[0.65rem] ${selection ? "border-[#d9d3ff] bg-[#faf9ff]" : "border-[#e7e6ec] bg-[#fbfbfc]"}`}><div className="flex items-center justify-between gap-2"><span className="text-[0.66rem] font-extrabold uppercase tracking-[0.055em] text-[#777583]">Selection</span>{selection && <button className="p-0 text-[0.66rem] font-bold text-[#6651e8]" type="button" onClick={clearSelection}>Clear</button>}</div>{selection ? <p className="mb-0 mt-[0.35rem] line-clamp-3 text-[0.72rem] leading-[1.45] text-[#4d4a62]">“{selection.text}”</p> : <p className="mb-0 mt-[0.35rem] text-[0.72rem] leading-[1.45] text-[#858390]">Select words in the document to enhance only that portion.</p>}</div><div className="mt-[0.68rem] grid gap-[0.68rem]"><OptionGrid label="Tone" value={tone} options={["auto", "persuasive", "informative", "conversational"]} onChange={setTone} /><OptionGrid label="Style" value={style} options={["natural", "formal"]} onChange={setStyle} /></div></>}
           <div className="mt-3"><label className="grid gap-1.5 text-[0.66rem] font-extrabold uppercase tracking-[0.055em] text-[#777583]">Audience level<select value={audienceLevel} onChange={(event) => setAudienceLevel(event.target.value as AudienceLevel)} className="transcript-select w-full rounded-md border border-[#e5e4ea] bg-white px-2 py-2 text-[0.72rem] font-semibold normal-case tracking-normal text-[#4d4a62]"><option value="beginner">Beginner</option><option value="general">General audience</option><option value="specialist">Specialist</option></select></label><p className="mb-0 mt-1.5 text-[0.68rem] leading-[1.4] text-[#777583]">{audienceLevel === "beginner" ? "Use student-friendly language and explain ideas step by step." : audienceLevel === "specialist" ? "Polished professional delivery with clear framing and a strong through-line." : "Clear, balanced explanations for a normal presentation."}</p></div>
+          {Boolean(data.pending_generation_drafts?.length) && <button type="button" disabled={working || dirty || bulkRunning} onClick={() => { setGenerationReviewError(""); setGenerationReviewOpen(true); }} className="mt-3 w-full rounded-lg border border-[#d9ceef] bg-[#f5f1fc] px-3 py-2 text-xs font-semibold text-[#7054ad] disabled:opacity-40">Review generated scripts ({data.pending_generation_drafts?.length})</button>}
           {mode === "ai-gen" ? <button className="mt-[0.72rem] w-full rounded-[8px] border border-[#d9d3ff] bg-[#faf9ff] px-[0.7rem] py-[0.62rem] text-[0.7rem] font-bold text-[#5e4ce0] disabled:cursor-not-allowed disabled:opacity-45" type="button" onClick={requestAllGeneration} disabled={working || data.bulk_generation_status === "queued" || data.bulk_generation_status === "running"}>{data.bulk_generation_status === "queued" || data.bulk_generation_status === "running" ? `Generating all slides${data.bulk_generation_progress !== null ? ` · ${data.bulk_generation_progress}%` : ""}` : "Generate all slides"}</button> : null}{mode === "human-enhance" && !transcript.transcript_id ? <button className="mt-[0.72rem] w-full rounded-[8px] border border-[#d9d3ff] bg-[#faf9ff] px-[0.7rem] py-[0.62rem] text-[0.7rem] font-bold text-[#5e4ce0] disabled:cursor-not-allowed disabled:opacity-45" type="button" onClick={() => void startHumanWriting()} disabled={working}>Start writing on this slide</button> : null}{dirty ? <button className="mt-[0.72rem] w-full rounded-[8px] border border-[#d9d3ff] bg-[#faf9ff] px-[0.7rem] py-[0.62rem] text-[0.7rem] font-bold text-[#5e4ce0] disabled:cursor-not-allowed disabled:opacity-45" type="button" onClick={() => void saveScriptEdits()} disabled={working}>Save edits</button> : null}<button className="mt-[0.72rem] w-full rounded-[8px] bg-[#19191f] px-[0.7rem] py-[0.7rem] text-[0.73rem] font-bold text-white disabled:cursor-not-allowed disabled:opacity-45" type="button" onClick={requestSlideGeneration} disabled={working || (mode === "human-enhance" && (!selection || !transcript.transcript_id))}>{working ? "Working…" : mode === "human-enhance" ? "Enhance selected text" : "Generate this slide"}</button>{actionNote && <p className="mb-0 mt-[0.48rem] text-[0.68rem] leading-[1.4] text-[#6e6c7b]">{actionNote}</p>}</section>
         <section className="rounded-[10px] border border-[#e6e5eb] bg-white px-[0.9rem] py-[0.85rem]"><div className="flex items-center justify-between gap-3"><h3 className="m-0 text-[0.84rem] tracking-[-0.025em]">{selectedGeneratedTone ? "Selected tone" : "Tone check"}</h3>{visibleTone && <span className="rounded-full border border-[#bfe7ce] bg-[#f3fff7] px-[0.55rem] py-[0.27rem] text-[0.66rem] font-bold text-[#218e56]">✦ {visibleTone}</span>}</div>{selectedGeneratedTone ? <p className="mb-0 mt-[0.5rem] text-[0.72rem] leading-[1.48] text-[#62606d]">Used as the target delivery tone for this generated script.</p> : <>{transcript.tone_check?.classification ? <p className="mb-0 mt-[0.5rem] text-[0.66rem] font-bold text-[#777583]">Automatically detected from the current script</p> : null}<p className="mb-0 mt-[0.45rem] text-[0.72rem] leading-[1.48] text-[#62606d]">{transcript.transcript_id && !transcript.coaching_analysis_available ? "Coaching feedback is temporarily unavailable. Your script is still saved." : transcript.tone_check?.rationale ?? "Generate or write a script to receive a tone assessment."}</p></>}</section>
         <section className="rounded-[10px] border border-[#e6e5eb] bg-white px-[0.9rem] py-[0.85rem]"><div className="flex items-center justify-between"><h3 className="m-0 text-[0.84rem] tracking-[-0.025em]">Complex terms</h3><span className="grid h-[19px] w-[19px] place-items-center rounded-full bg-[#f0edff] text-[0.62rem] font-extrabold text-[#6a55ea]">{transcript.complex_terms.length}</span></div>{transcript.complex_terms.length ? <div className="mt-[0.65rem] grid gap-[0.48rem]">{transcript.complex_terms.map((term) => <div className="rounded-[7px] border border-[#e9e7f2] bg-[#fbfaff] px-[0.65rem] py-[0.55rem]" key={term.term}><strong className="text-[0.68rem] text-[#5c49d5]">{term.term}</strong><p className="mb-0 mt-[0.22rem] text-[0.69rem] leading-[1.42] text-[#6b6977]">{term.definition}</p></div>)}</div> : <p className="mb-0 mt-[0.55rem] text-[0.7rem] leading-[1.4] text-[#858390]">No complex terms were detected on this slide.</p>}</section>
@@ -391,9 +421,10 @@ export default function TranscriptEnhancerPage() {
       </div></aside>
     </section>
     {historyOpen && <TranscriptVersions key={transcript.slide_number} slideNumber={transcript.slide_number} entries={history} current={paragraphs.map((paragraph) => paragraph.current)} loading={historyLoading} busy={working} dirty={dirty} error={restoreError || historyError} onRetry={() => { setRestoreError(""); if (!dirty) void loadTranscript(true); setHistoryRefresh((value) => value + 1); }} onRestore={(entry) => void restoreVersion(entry)} onClose={() => { if (!working) setHistoryOpen(false); }} />}
+    {generationReviewOpen && Boolean(data.pending_generation_drafts?.length) && <TranscriptGenerationReview initialDraftId={generationReviewInitialId} drafts={data.pending_generation_drafts ?? []} busy={working} error={generationReviewError} onDecision={(draft, decision) => void decideGeneration(draft, decision)} onClose={() => { setGenerationReviewOpen(false); setGenerationReviewError(""); }} />}
     {review && <TranscriptReview preview={review.preview} settings={`${review.request.tone} tone · ${review.request.style} style · ${review.request.audience_level} audience`} busy={working} error={reviewError} onAccept={() => void acceptEnhancement()} onCancel={() => { setReview(null); setReviewError(""); setActionNote("Suggestion dismissed. Your script is unchanged."); }} />}
     {rangeDrawerOpen && <TranscriptBulkDrawer slides={data.slides} range={bulkRange} replaceExisting={replaceExisting} settings={[`${duration === 45 ? "Short" : duration === 75 ? "Standard" : "Detailed"} length`, `${tone === "auto" ? "Automatic" : tone[0].toUpperCase() + tone.slice(1)} tone`, `${style === "natural" ? "Natural" : "Formal"} style`, `${audienceLevel[0].toUpperCase() + audienceLevel.slice(1)} audience`]} dirty={dirty} busy={working} error={actionNote} onRange={setBulkRange} onReplaceExisting={setReplaceExisting} onGenerate={() => void confirmBulkGeneration()} onClose={() => { if (!working) setRangeDrawerOpen(false); }} />}
     {pendingAction ? <div className="transcript-dialog-overlay transcript-alert-overlay fixed inset-0 z-[60] grid place-items-center bg-[#171724]/45 p-6 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="pending-action-title"><section className="transcript-dialog transcript-alert-dialog w-full max-w-[27rem] rounded-2xl border border-[#e3e1ea] bg-white p-7 shadow-[0_24px_70px_rgba(26,22,51,0.3)]"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff3df] text-[1.1rem] font-extrabold text-[#b66b12]" aria-hidden="true">!</div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#9c651e]">Confirmation needed</p><h2 className="mb-0 mt-2 text-[1.42rem] tracking-[-0.05em]" id="pending-action-title">{pendingActionTitle}</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{pendingActionMessage}</p><div className="mt-6 flex justify-end gap-2"><button className="rounded-lg border border-[#dddbe4] px-3 py-2 text-[0.75rem] font-bold text-[#5b5968]" onClick={() => setPendingAction(null)} type="button">Keep editing</button><button className="rounded-lg bg-[#1b1a22] px-3 py-2 text-[0.75rem] font-bold text-white" onClick={confirmPendingAction} type="button">{pendingActionConfirm}</button></div></section></div> : null}
-    {bulkModalVisible ? <div className="transcript-dialog-overlay transcript-alert-overlay fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-6 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="bulk-generation-title"><section className="transcript-dialog transcript-alert-dialog w-full max-w-[28rem] rounded-2xl border border-[#e3dfff] bg-white p-7 shadow-[0_24px_70px_rgba(26,22,51,0.3)]">{bulkFailed ? <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff1f3] text-xl font-extrabold text-[#c43d55]" aria-hidden="true">!</div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#b33c50]">Generation stopped</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">Scripts could not be completed</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{processingMessage(data.bulk_generation_error_code, "Generation could not finish. Please retry.")} {replaceExisting ? "Existing scripts and completed versions are preserved in history. Retrying will regenerate this selected range again." : "Completed scripts are preserved. Retry will continue with only the slides that are still empty."}</p><div className="mt-6 flex justify-end gap-2"><button className="rounded-lg border border-[#dddbe4] px-3 py-2 text-[0.75rem] font-bold text-[#5b5968]" onClick={() => setBulkGenerationState(null)} type="button">Dismiss</button><button className="rounded-lg bg-[#1b1a22] px-3 py-2 text-[0.75rem] font-bold text-white" onClick={() => void generateAllSlides()} type="button">Retry generation</button></div></> : <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f0edff] text-[1.15rem] text-[#6550e5]" aria-hidden="true"><span className="animate-pulse">✦</span></div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#6753e9]">Transcript generation</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">{bulkGenerationState === "starting" ? "Starting generation…" : "Writing your presenter scripts"}</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{bulkGenerationState === "starting" ? `Setting up generation for slides ${bulkRange.start}–${bulkRange.end}. Keep this window open while it starts.` : (replaceExisting ? `Writing new scripts for slides ${bulkRange.start}–${bulkRange.end}. Previous scripts stay in Version history.` : `Filling empty transcripts from slide ${bulkRange.start} through ${bulkRange.end}. Existing scripts are being left unchanged.`)}</p><div className="mt-6"><div className="flex items-center justify-between text-[0.72rem] font-bold text-[#555261]"><span>{bulkGenerationState === "starting" ? "Queueing job" : `${completedSlideCount} of ${bulkRangeCount} slides checked`}</span><span className="tabular-nums text-[#6550e5]">{bulkGenerationState === "starting" ? "…" : `${bulkProgress}%`}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#ebe9f2]"><div className="h-full rounded-full bg-gradient-to-r from-[#705cf0] to-[#a28cff] transition-[width] duration-500 ease-out" style={{ width: bulkGenerationState === "starting" ? "8%" : `${bulkProgress}%` }} /></div></div><p className="mb-0 mt-5 text-center text-[0.69rem] text-[#918e9e]">Completed scripts stay saved as generation continues.</p></>}</section></div> : null}
+    {bulkModalVisible ? <div className="transcript-dialog-overlay transcript-alert-overlay fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-6 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="bulk-generation-title"><section className="transcript-dialog transcript-alert-dialog w-full max-w-[28rem] rounded-2xl border border-[#e3dfff] bg-white p-7 shadow-[0_24px_70px_rgba(26,22,51,0.3)]">{bulkFailed ? <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff1f3] text-xl font-extrabold text-[#c43d55]" aria-hidden="true">!</div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#b33c50]">Generation stopped</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">Scripts could not be completed</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{processingMessage(data.bulk_generation_error_code, "Generation could not finish. Please retry.")} {replaceExisting ? "Existing scripts are unchanged. Completed replacement drafts remain available for review. Retrying will generate new drafts for this range." : "Completed scripts are preserved. Retry will continue with only the slides that are still empty."}</p><div className="mt-6 flex justify-end gap-2"><button className="rounded-lg border border-[#dddbe4] px-3 py-2 text-[0.75rem] font-bold text-[#5b5968]" onClick={() => setBulkGenerationState(null)} type="button">Dismiss</button><button className="rounded-lg bg-[#1b1a22] px-3 py-2 text-[0.75rem] font-bold text-white" onClick={() => void generateAllSlides()} type="button">Retry generation</button></div></> : <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f0edff] text-[1.15rem] text-[#6550e5]" aria-hidden="true"><span className="animate-pulse">✦</span></div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#6753e9]">Transcript generation</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">{bulkGenerationState === "starting" ? "Starting generation…" : "Writing your presenter scripts"}</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{bulkGenerationState === "starting" ? `Setting up generation for slides ${bulkRange.start}–${bulkRange.end}. Keep this window open while it starts.` : (replaceExisting ? `Writing new scripts for slides ${bulkRange.start}–${bulkRange.end}. Existing scripts stay unchanged until you accept each replacement.` : `Filling empty transcripts from slide ${bulkRange.start} through ${bulkRange.end}. Existing scripts are being left unchanged.`)}</p><div className="mt-6"><div className="flex items-center justify-between text-[0.72rem] font-bold text-[#555261]"><span>{bulkGenerationState === "starting" ? "Queueing job" : `${completedSlideCount} of ${bulkRangeCount} slides checked`}</span><span className="tabular-nums text-[#6550e5]">{bulkGenerationState === "starting" ? "…" : `${bulkProgress}%`}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#ebe9f2]"><div className="h-full rounded-full bg-gradient-to-r from-[#705cf0] to-[#a28cff] transition-[width] duration-500 ease-out" style={{ width: bulkGenerationState === "starting" ? "8%" : `${bulkProgress}%` }} /></div></div><p className="mb-0 mt-5 text-center text-[0.69rem] text-[#918e9e]">Empty slides are saved; replacements wait for your review.</p></>}</section></div> : null}
   </main>;
 }
