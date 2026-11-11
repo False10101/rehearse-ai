@@ -472,8 +472,8 @@ def test_retry_and_log_identify_field_without_exposing_response(monkeypatch, cap
     monkeypatch.setattr(slide_analyzer.requests, "post", post)
     slide_analyzer.analyze([{"num": 1}])
     assert requests[0]["response_format"]["type"] == "json_schema"
-    assert requests[0]["provider"] == {"order": ["openai/fast"], "allow_fallbacks": True}
-    assert requests[0]["service_tier"] == "priority"
+    assert requests[0]["provider"] == {"order": ["openai"], "allow_fallbacks": True}
+    assert requests[0]["service_tier"] == "default"
     assert "require_parameters" not in requests[0]["provider"]
     assert "temperature" not in requests[0]
     assert requests[0]["model"] == "openai/gpt-6-luna"

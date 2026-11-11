@@ -6,7 +6,7 @@ from typing import Literal
 import requests
 from pydantic import BaseModel, Field, ValidationError
 
-from app.services.provider_requests import luna_fast_routing, post_provider_request
+from app.services.provider_requests import luna_standard_routing, post_provider_request
 from app.services.slide_analyzer import ANALYSIS_MODEL, OPENROUTER_API_URL, openrouter_headers
 
 TRANSCRIPT_MODEL = ANALYSIS_MODEL
@@ -171,7 +171,7 @@ def _request_json(prompt: str, max_tokens: int = 4000, *, system_prompt: str | N
         headers=openrouter_headers(),
         json={
             "model": TRANSCRIPT_MODEL,
-            **luna_fast_routing(),
+            **luna_standard_routing(),
             "messages": [
                 {
                     "role": "system",

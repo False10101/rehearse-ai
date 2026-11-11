@@ -39,7 +39,7 @@ from app.db.session import get_session_factory
 from app.services.processing_diagnostics import log_processing_state
 from app.services.provider_requests import (
     ProviderRequestError,
-    luna_fast_routing,
+    luna_standard_routing,
     post_provider_request,
 )
 from app.services.slide_design import (
@@ -1267,7 +1267,7 @@ def _analyze_section(
                 headers=openrouter_headers(),
                 json={
                     "model": ANALYSIS_MODEL,
-                    **luna_fast_routing(),
+                    **luna_standard_routing(),
                     "messages": [
                         {
                             "role": "system",

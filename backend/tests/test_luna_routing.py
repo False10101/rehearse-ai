@@ -16,7 +16,7 @@ class RequestCaptured(BaseException):
 
 
 @pytest.mark.parametrize("feature", ["slides", "transcript", "agenda", "speech", "gesture"])
-def test_luna_features_prefer_fast_and_keep_the_existing_model(monkeypatch, feature):
+def test_luna_features_use_standard_and_keep_the_existing_model(monkeypatch, feature):
     payloads = []
 
     def capture(*args, **kwargs):
@@ -40,8 +40,8 @@ def test_luna_features_prefer_fast_and_keep_the_existing_model(monkeypatch, feat
             module._request_json("speaker-ready feedback", max_tokens=2200)
     payload = payloads[0]
     assert payload["model"] == "openai/gpt-6-luna"
-    assert payload["service_tier"] == "priority"
-    assert payload["provider"] == {"order": ["openai/fast"], "allow_fallbacks": True}
+    assert payload["service_tier"] == "default"
+    assert payload["provider"] == {"order": ["openai"], "allow_fallbacks": True}
     assert payload["messages"]
     assert payload["response_format"]
 
