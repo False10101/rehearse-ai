@@ -524,3 +524,24 @@ def test_pose_events_require_sustained_detection_and_save_one_evidence_frame(tmp
     assert events[0]["type"] == "hands_clasped_low"
     assert events[0]["evidence_index"] == 1
     assert (tmp_path / "evidence_001.jpg").is_file()
+
+
+def test_inward_forearms_can_hold_hands_together_with_separated_wrists():
+    # Palms extend beyond each wrist; a wrist-only gap rejects this posture.
+    p = keypoints(**{"7": (85, 195, 1), "8": (215, 195, 1),
+                     "9": (115, 215, 1), "10": (185, 215, 1)})
+    for scale in (0.5, 1, 3):
+        scaled = [(x * scale + 42, y * scale + 17, confidence) for x, y, confidence in p]
+        assert classify_pose(scaled)["hands_clasped_low"] >= 0.8
+
+
+def test_hand_estimate_does_not_join_hands_on_hips_or_open_gestures():
+    for p in (
+        keypoints(**{"7": (70, 170, 1), "8": (230, 170, 1),
+                     "9": (110, 245, 1), "10": (190, 245, 1)}),
+        keypoints(**{"7": (105, 170, 1), "8": (195, 170, 1),
+                     "9": (75, 205, 1), "10": (225, 205, 1)}),
+        keypoints(**{"7": (85, 195, 1), "8": (215, 195, 1),
+                     "9": (115, 215, 1), "10": (185, 215, 0.1)}),
+    ):
+        assert classify_pose(p).get("hands_clasped_low", 0) < 0.72

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     api_base_url: str = "http://localhost:8000"
     database_url: str | None = None
+    guest_access_enabled: bool = True
+    guest_practice_sample_id: str | None = None
     auth0_domain: str | None = None
     auth0_audience: str | None = None
     openrouter_api_key: str | None = None

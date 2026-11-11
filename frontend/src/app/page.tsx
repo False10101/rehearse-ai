@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import "./landing.css";
 import { LandingFeaturePreview } from "@/components/landing-feature-preview";
@@ -54,6 +55,20 @@ function EntryLink({ compact = false }: Readonly<{ compact?: boolean }>) {
   return <div className="landing-auth-action"><button className={compact ? compactLink : primaryLink} disabled type="button">{compact ? "Sign in" : "Start rehearsing"}</button>{!compact && <p className="landing-auth-error" role="status">Google sign-in is temporarily unavailable. Please try again later.</p>}</div>;
 }
 
+function GuestEntry() {
+  const { startGuest, isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function enter() {
+    setBusy(true); setError("");
+    try { await startGuest(); router.push("/home"); }
+    catch (error) { setError(error instanceof Error ? error.message : "Guest access could not start."); setBusy(false); }
+  }
+  if (isAuthenticated) return null;
+  return <div className="landing-guest-entry"><button type="button" className="landing-signin" disabled={busy || isLoading} onClick={() => void enter()}>{busy ? "Opening workspace…" : "Try without signing in"}</button>{error && <p role="alert" className="landing-auth-error">{error}</p>}</div>;
+}
+
 const landingFeatures = [
   { name: "Slide Analyzer", icon: "slides" as const, text: "Review your content and visual design, with suggestions for each slide." },
   { name: "Transcript Enhancer", icon: "script" as const, text: "Generate an editable script or refine your own words for your audience." },
@@ -94,7 +109,7 @@ export default function HomePage() {
               <h1 id="hero-title">Clearer slides.<br />Stronger words.<br /><span>Better delivery.</span></h1>
               <p className="landing-description">Work on what you say, what you show, and how you present. Bring your slides or a recorded rehearsal, and leave with something to practise.</p>
               <div className="landing-entry"><EntryLink /><span>Continue with your Google account</span></div>
-              <p className="landing-support">From your first draft to your next rehearsal.</p>
+              <GuestEntry /><p className="landing-support">From your first draft to your next rehearsal.</p>
             </div>
             <div className="landing-product" role="region" aria-label="Feature showcase" aria-roledescription="carousel" onMouseEnter={() => setInteracting(true)} onMouseLeave={() => setInteracting(false)} onFocusCapture={() => setInteracting(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setInteracting(false); }}>
               <div className="landing-product-heading"><span>{active.name}</span><span>{previewCaptions[activeFeature]}</span></div>

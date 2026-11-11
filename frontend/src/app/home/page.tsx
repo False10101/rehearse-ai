@@ -51,7 +51,7 @@ function presentationDate(value: string) {
 }
 
 export default function WorkspaceHomePage() {
-  const { getAccessToken, logout } = useAuth();
+  const { getAccessToken, logout, isGuest } = useAuth();
   const [presentations, setPresentations] = useState<PresentationListItem[]>([]);
   const [loadingPresentations, setLoadingPresentations] = useState(true);
   const [presentationsError, setPresentationsError] = useState<string | null>(null);
@@ -119,7 +119,7 @@ export default function WorkspaceHomePage() {
           <span className="hidden border-l border-[#e6e3ed] pl-7 text-sm font-medium text-[#797383] sm:block">Workspace</span>
         </div>
         <button className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[#777180] transition hover:bg-[#f5f3fa] hover:text-[#302b40] ${focusStyle}`} onClick={logout} type="button">
-          <WorkspaceIcon kind="logout" /> Log out
+          <WorkspaceIcon kind="logout" /> {isGuest ? "Leave guest workspace" : "Log out"}
         </button>
       </nav>
 
@@ -146,9 +146,9 @@ export default function WorkspaceHomePage() {
                     <span className="home-tool-icon"><WorkspaceIcon kind={feature.icon} /></span>
                   </div>
                   <h3 className="home-tool-title">{feature.name}</h3>
-                  <p className="home-tool-description">{feature.description}</p>
+                  <p className="home-tool-description">{isGuest && feature.icon === "video" ? "Explore body language and speech feedback from our sample recording." : feature.description}</p>
                   <span className="home-tool-action">
-                    {feature.action}<ArrowIcon />
+                    {isGuest && feature.icon === "video" ? "Explore sample report" : feature.action}<ArrowIcon />
                   </span>
                 </>;
                 return <Link className={featureStyle} href={feature.href} key={feature.name}>{content}</Link>;

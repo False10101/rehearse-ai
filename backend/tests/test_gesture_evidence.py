@@ -236,3 +236,22 @@ def test_movement_measurements_survive_and_reset_after_tracking_loss():
     assert tracker.evidence["hand_near_face"]["body_part"] == "your left hand"
     tracker.observe(2, [])
     assert tracker.evidence == {}
+
+
+def test_fingers_near_face_with_wrist_below_chin_and_lowering_recovery():
+    tracker = MovementTracker()
+    p = head_points()
+    # Wrist stays below the previous nose-height cutoff; forearm points upward.
+    p[7], p[9] = (100, 145, 0.9), (100, 100, 0.9)
+    results = [tracker.observe(i / 5, p) for i in range(12)]
+    assert any("hand_near_face" in result for result in results)
+    assert "hand_near_face" not in tracker.observe(2.4, head_points())
+
+
+def test_forearm_estimate_does_not_promote_chest_gesture_or_uncertain_elbow():
+    for elbow, wrist in (((100, 185, .9), (100, 150, .9)),
+                          ((100, 145, .1), (100, 100, .9))):
+        tracker = MovementTracker()
+        p = head_points()
+        p[7], p[9] = elbow, wrist
+        assert all("hand_near_face" not in tracker.observe(i / 5, p) for i in range(25))

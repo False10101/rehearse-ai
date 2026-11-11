@@ -334,7 +334,7 @@ class Job(TimestampedModel, Base):
 
 
 class TranscriptGenerationDraft(Base):
-    """Generated replacement held separately until its owner accepts it."""
+    """Pending transcript write held for review: generation or a flagged manual edit."""
 
     __tablename__ = "transcript_generation_drafts"
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -350,3 +350,11 @@ class TranscriptGenerationDraft(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class GuestSession(Base):
+    __tablename__ = "guest_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

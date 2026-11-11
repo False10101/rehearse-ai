@@ -132,6 +132,22 @@ def owned_session(
     return practice_session
 
 
+def require_recording_owner(user):
+    if user.auth0_subject.startswith("guest|"):
+        raise HTTPException(403, "Guest Upload Practice uses the sample recording only.")
+
+
+def readable_session(database, user, practice_session_id):
+    if user.auth0_subject.startswith("guest|"):
+        if str(practice_session_id) != get_settings().guest_practice_sample_id:
+            raise HTTPException(404, "Practice report not found.")
+        record = database.get(UploadPracticeSession, practice_session_id)
+        if record is None or record.status != "completed":
+            raise HTTPException(404, "The sample report is not ready yet.")
+        return record
+    return owned_session(database, user.id, practice_session_id)
+
+
 def session_response(
     record: UploadPracticeSession, database: Session | None = None
 ) -> UploadPracticeResponse:
@@ -293,6 +309,7 @@ async def create_upload_practice_session(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> UploadPracticeCreatedResponse:
+    require_recording_owner(user)
     filename = Path(file.filename or "").name
     if Path(filename).suffix.lower() != ".mp4":
         raise HTTPException(
@@ -346,6 +363,7 @@ def retry_speech_coaching(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ):
+    require_recording_owner(user)
     record = owned_session(database, user.id, practice_session_id)
     database.refresh(record, with_for_update=True)
     if record.status != "completed":
@@ -381,6 +399,15 @@ def list_upload_practice_sessions(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> list[UploadPracticeResponse]:
+    if user.auth0_subject.startswith("guest|"):
+        sample_id = get_settings().guest_practice_sample_id
+        if not sample_id:
+            return []
+        try:
+            record = readable_session(database, user, uuid.UUID(sample_id))
+        except (ValueError, HTTPException):
+            return []
+        return [session_response(record)]
     records = database.scalars(
         select(UploadPracticeSession)
         .where(UploadPracticeSession.user_id == user.id)
@@ -396,7 +423,7 @@ def get_upload_practice_session(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> UploadPracticeResponse:
-    return session_response(owned_session(database, user.id, practice_session_id), database)
+    return session_response(readable_session(database, user, practice_session_id), database)
 
 
 @router.post("/sessions/{practice_session_id}/gesture-review/{evidence_index}",
@@ -407,6 +434,7 @@ def review_saved_gesture(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> GestureCoaching:
+    require_recording_owner(user)
     record = owned_session(database, user.id, practice_session_id)
     if record.status != "completed":
         raise HTTPException(409, "Wait for your recording review to finish.")
@@ -445,7 +473,7 @@ def get_upload_practice_evidence(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> FileResponse:
-    record = owned_session(database, user.id, practice_session_id)
+    record = readable_session(database, user, practice_session_id)
     pose_event = next(
         (
             item
@@ -454,7 +482,7 @@ def get_upload_practice_evidence(
         ),
         None,
     )
-    image = evidence_path(user.id, practice_session_id, evidence_index)
+    image = evidence_path(record.user_id, practice_session_id, evidence_index)
     if pose_event is None and not image.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -475,11 +503,11 @@ def get_gesture_clip(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> FileResponse:
-    record = owned_session(database, user.id, practice_session_id)
+    record = readable_session(database, user, practice_session_id)
     if not any(event.get("clip_index") == clip_index for event in record.pose_events):
         raise HTTPException(status_code=404, detail="Gesture clip not found.")
     path = storage_path(
-        f"practice-reports/{user.id}/{practice_session_id}/gesture_{clip_index:03d}.mp4"
+        f"practice-reports/{record.user_id}/{practice_session_id}/gesture_{clip_index:03d}.mp4"
     )
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Gesture clip not found.")
@@ -494,6 +522,7 @@ def delete_upload_practice_session(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> None:
+    require_recording_owner(user)
     record = owned_session(database, user.id, practice_session_id)
     report_directory = storage_path(f"practice-reports/{user.id}/{practice_session_id}")
     temporary_directory = storage_path(f"temporary/upload-practice/{user.id}/{practice_session_id}")
@@ -511,7 +540,7 @@ def get_speech_excerpt(
     database: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
 ) -> FileResponse:
-    record = owned_session(database, user.id, practice_session_id)
+    record = readable_session(database, user, practice_session_id)
     moment = next(
         (
             m
@@ -523,7 +552,7 @@ def get_speech_excerpt(
     if moment is None:
         raise HTTPException(status_code=404, detail="Audio excerpt not found.")
     path = storage_path(
-        f"practice-reports/{user.id}/{practice_session_id}/speech_{moment_id:03d}.mp3"
+        f"practice-reports/{record.user_id}/{practice_session_id}/speech_{moment_id:03d}.mp3"
     )
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Audio excerpt not found.")

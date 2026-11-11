@@ -106,4 +106,24 @@ def get_current_auth0_principal(
             detail="Authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return get_auth0_principal(credentials.credentials, get_settings())
+    return get_access_principal(credentials.credentials, get_settings())
+
+
+def get_access_principal(token: str, settings: Settings) -> Auth0Principal:
+    """Guest tokens are opaque credentials, never accepted as Auth0 JWTs."""
+    if not token.startswith("guest_"):
+        return get_auth0_principal(token, settings)
+    import hashlib
+    from sqlalchemy import select
+    from app.db.models import GuestSession, User
+    from app.db.session import get_session_factory
+
+    if settings.guest_access_enabled:
+        with get_session_factory()() as session:
+            user = session.scalar(select(User).join(GuestSession, GuestSession.user_id == User.id).where(
+                GuestSession.token_hash == hashlib.sha256(token.encode()).hexdigest(),
+                User.is_active.is_(True),
+            ))
+            if user is not None:
+                return Auth0Principal(subject=user.auth0_subject)
+    raise HTTPException(401, "Guest session is unavailable. Please enter as a guest again.")

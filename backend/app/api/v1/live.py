@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from app.core.auth import Auth0Principal, get_auth0_principal
+from app.core.auth import Auth0Principal, get_access_principal
 from app.core.config import get_settings
 from app.services.live_coaching import FrameObservation, LiveCoachingTracker
 
@@ -32,7 +32,7 @@ def _authenticate_websocket_message(payload: Any) -> Auth0Principal | None:
     token = payload.get("access_token")
     if not isinstance(token, str) or not token:
         return None
-    return get_auth0_principal(token, get_settings())
+    return get_access_principal(token, get_settings())
 
 
 def _numbers(value, length, low, high):

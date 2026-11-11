@@ -4,6 +4,7 @@ import "./transcript.css";
 import "@/components/transcript-dialogs.css";
 
 import { TranscriptGenerationReview, type GenerationDraft } from "@/components/transcript-generation-review";
+import { TranscriptSaveWarning, type SaveWarning } from "@/components/transcript-save-warning";
 import { TranscriptReview, type EnhancementPreview } from "@/components/transcript-review";
 import { TranscriptVersions, type TranscriptVersion } from "@/components/transcript-versions";
 import { TranscriptBulkDrawer } from "@/components/transcript-bulk-drawer";
@@ -88,6 +89,8 @@ export default function TranscriptEnhancerPage() {
   const [showScriptHighlights, setShowScriptHighlights] = useState(true);
   const [selection, setSelection] = useState<TextSelection | null>(null);
   const [review, setReview] = useState<{ preview: EnhancementPreview; request: { slide_transcript_id: string; base_revision: number; start: TextSelection["start"]; end: TextSelection["end"]; tone: Tone; style: Style; audience_level: AudienceLevel } } | null>(null);
+  const [saveWarning, setSaveWarning] = useState<SaveWarning | null>(null);
+  const [saveWarningError, setSaveWarningError] = useState("");
   const [reviewError, setReviewError] = useState("");
   const [generationReviewOpen, setGenerationReviewOpen] = useState(false);
   const [generationReviewInitialId, setGenerationReviewInitialId] = useState<string | undefined>();
@@ -202,7 +205,7 @@ export default function TranscriptEnhancerPage() {
     setSelection({ text, start: { paragraph_id: startElement.dataset.paragraphId, offset: offsetIn(startElement, range.startContainer, range.startOffset) }, end: { paragraph_id: endElement.dataset.paragraphId, offset: offsetIn(endElement, range.endContainer, range.endOffset) } });
   };
 
-  const saveScriptEdits = useCallback(async (): Promise<TranscriptSlide | null> => {
+  const saveScriptEdits = useCallback(async (confirmReviewId?: string): Promise<TranscriptSlide | null> => {
     if (!dirty || !transcript?.transcript_id || !transcript.revision || !presentationId || !accessToken) return transcript;
     const seenIds = new Set<string>();
     const edits = Array.from(editorRef.current?.childNodes ?? []).map((node) => {
@@ -213,15 +216,23 @@ export default function TranscriptEnhancerPage() {
       return { id, text: node.textContent?.trim() ?? "" };
     }).filter((paragraph) => Boolean(paragraph.text));
     if (!edits.length) edits.push({ id: transcript.paragraphs[0]?.id ?? null, text: "" });
-    setWorking(true);
+    setWorking(true); setSaveWarningError("");
     try {
-      const response = await fetch(`${apiBaseUrl}/api/v1/presentations/${presentationId}/transcript/slides/${transcript.slide_number}`, { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ slide_transcript_id: transcript.transcript_id, base_revision: transcript.revision, paragraphs: edits }) });
+      const response = await fetch(`${apiBaseUrl}/api/v1/presentations/${presentationId}/transcript/slides/${transcript.slide_number}`, { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ slide_transcript_id: transcript.transcript_id, base_revision: transcript.revision, paragraphs: edits, confirm_review_id: confirmReviewId }) });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiError(payload, "Script could not be saved."));
+      if (typeof payload === "object" && payload !== null && "confirmation_required" in payload && payload.confirmation_required === true) {
+        setSaveWarning(payload as SaveWarning); return null;
+      }
+      setSaveWarning(null);
       const updated = payload as TranscriptSlide; replaceSlide(updated); setDirty(false);
       setActionNote(updated.coaching_analysis_available ? "Script saved and coaching feedback refreshed." : "Script saved. Coaching feedback could not refresh; save again later to retry it.");
       return updated;
-    } catch (error) { setActionNote(error instanceof Error ? error.message : "Script could not be saved."); return null; }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Script could not be saved.";
+      if (confirmReviewId) setSaveWarningError(message);
+      setActionNote(message); return null;
+    }
     finally { setWorking(false); }
   }, [accessToken, dirty, presentationId, replaceSlide, transcript]);
 
@@ -424,6 +435,7 @@ export default function TranscriptEnhancerPage() {
     {generationReviewOpen && Boolean(data.pending_generation_drafts?.length) && <TranscriptGenerationReview initialDraftId={generationReviewInitialId} drafts={data.pending_generation_drafts ?? []} busy={working} error={generationReviewError} onDecision={(draft, decision) => void decideGeneration(draft, decision)} onClose={() => { setGenerationReviewOpen(false); setGenerationReviewError(""); }} />}
     {review && <TranscriptReview preview={review.preview} settings={`${review.request.tone} tone · ${review.request.style} style · ${review.request.audience_level} audience`} busy={working} error={reviewError} onAccept={() => void acceptEnhancement()} onCancel={() => { setReview(null); setReviewError(""); setActionNote("Suggestion dismissed. Your script is unchanged."); }} />}
     {rangeDrawerOpen && <TranscriptBulkDrawer slides={data.slides} range={bulkRange} replaceExisting={replaceExisting} settings={[`${duration === 45 ? "Short" : duration === 75 ? "Standard" : "Detailed"} length`, `${tone === "auto" ? "Automatic" : tone[0].toUpperCase() + tone.slice(1)} tone`, `${style === "natural" ? "Natural" : "Formal"} style`, `${audienceLevel[0].toUpperCase() + audienceLevel.slice(1)} audience`]} dirty={dirty} busy={working} error={actionNote} onRange={setBulkRange} onReplaceExisting={setReplaceExisting} onGenerate={() => void confirmBulkGeneration()} onClose={() => { if (!working) setRangeDrawerOpen(false); }} />}
+    {saveWarning && <TranscriptSaveWarning review={saveWarning} busy={working} error={saveWarningError} onCancel={() => { setSaveWarning(null); setSaveWarningError(""); }} onConfirm={() => void saveScriptEdits(saveWarning.review_id)} />}
     {pendingAction ? <div className="transcript-dialog-overlay transcript-alert-overlay fixed inset-0 z-[60] grid place-items-center bg-[#171724]/45 p-6 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="pending-action-title"><section className="transcript-dialog transcript-alert-dialog w-full max-w-[27rem] rounded-2xl border border-[#e3e1ea] bg-white p-7 shadow-[0_24px_70px_rgba(26,22,51,0.3)]"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff3df] text-[1.1rem] font-extrabold text-[#b66b12]" aria-hidden="true">!</div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#9c651e]">Confirmation needed</p><h2 className="mb-0 mt-2 text-[1.42rem] tracking-[-0.05em]" id="pending-action-title">{pendingActionTitle}</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{pendingActionMessage}</p><div className="mt-6 flex justify-end gap-2"><button className="rounded-lg border border-[#dddbe4] px-3 py-2 text-[0.75rem] font-bold text-[#5b5968]" onClick={() => setPendingAction(null)} type="button">Keep editing</button><button className="rounded-lg bg-[#1b1a22] px-3 py-2 text-[0.75rem] font-bold text-white" onClick={confirmPendingAction} type="button">{pendingActionConfirm}</button></div></section></div> : null}
     {bulkModalVisible ? <div className="transcript-dialog-overlay transcript-alert-overlay fixed inset-0 z-50 grid place-items-center bg-[#171724]/45 p-6 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="bulk-generation-title"><section className="transcript-dialog transcript-alert-dialog w-full max-w-[28rem] rounded-2xl border border-[#e3dfff] bg-white p-7 shadow-[0_24px_70px_rgba(26,22,51,0.3)]">{bulkFailed ? <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff1f3] text-xl font-extrabold text-[#c43d55]" aria-hidden="true">!</div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#b33c50]">Generation stopped</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">Scripts could not be completed</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{processingMessage(data.bulk_generation_error_code, "Generation could not finish. Please retry.")} {replaceExisting ? "Existing scripts are unchanged. Completed replacement drafts remain available for review. Retrying will generate new drafts for this range." : "Completed scripts are preserved. Retry will continue with only the slides that are still empty."}</p><div className="mt-6 flex justify-end gap-2"><button className="rounded-lg border border-[#dddbe4] px-3 py-2 text-[0.75rem] font-bold text-[#5b5968]" onClick={() => setBulkGenerationState(null)} type="button">Dismiss</button><button className="rounded-lg bg-[#1b1a22] px-3 py-2 text-[0.75rem] font-bold text-white" onClick={() => void generateAllSlides()} type="button">Retry generation</button></div></> : <><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f0edff] text-[1.15rem] text-[#6550e5]" aria-hidden="true"><span className="animate-pulse">✦</span></div><p className="mb-0 mt-5 text-[0.68rem] font-bold uppercase tracking-[0.1em] text-[#6753e9]">Transcript generation</p><h2 className="mb-0 mt-2 text-[1.45rem] tracking-[-0.05em]" id="bulk-generation-title">{bulkGenerationState === "starting" ? "Starting generation…" : "Writing your presenter scripts"}</h2><p className="mb-0 mt-3 text-[0.84rem] leading-6 text-[#656270]">{bulkGenerationState === "starting" ? `Setting up generation for slides ${bulkRange.start}–${bulkRange.end}. Keep this window open while it starts.` : (replaceExisting ? `Writing new scripts for slides ${bulkRange.start}–${bulkRange.end}. Existing scripts stay unchanged until you accept each replacement.` : `Filling empty transcripts from slide ${bulkRange.start} through ${bulkRange.end}. Existing scripts are being left unchanged.`)}</p><div className="mt-6"><div className="flex items-center justify-between text-[0.72rem] font-bold text-[#555261]"><span>{bulkGenerationState === "starting" ? "Queueing job" : `${completedSlideCount} of ${bulkRangeCount} slides checked`}</span><span className="tabular-nums text-[#6550e5]">{bulkGenerationState === "starting" ? "…" : `${bulkProgress}%`}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#ebe9f2]"><div className="h-full rounded-full bg-gradient-to-r from-[#705cf0] to-[#a28cff] transition-[width] duration-500 ease-out" style={{ width: bulkGenerationState === "starting" ? "8%" : `${bulkProgress}%` }} /></div></div><p className="mb-0 mt-5 text-center text-[0.69rem] text-[#918e9e]">Empty slides are saved; replacements wait for your review.</p></>}</section></div> : null}
   </main>;

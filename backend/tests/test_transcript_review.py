@@ -1366,3 +1366,132 @@ def test_bulk_partial_failure_retains_successful_replacement_draft(setup, monkey
     current, _ = api._latest_by_slide(c.session, presentation_id)
     original = next(iter(current.values()))
     assert api._paragraphs(c.session, original.id)[0].current_text == "Prefix hey team suffix"
+
+
+def warning_save_request(c, review_id=None, text="Thank you for listening. Our solution is already complete."):
+    return api.SaveScriptRequest(slide_transcript_id=c.transcript.id, base_revision=c.transcript.revision,
+                                 paragraphs=[{"id": c.parts[0].id, "text": text}], confirm_review_id=review_id)
+
+
+def install_save_warning(c, monkeypatch):
+    calls = []
+    def analyze(paragraphs, source_context=None, **kwargs):
+        calls.append((paragraphs, source_context))
+        return {"complex_terms": [], "vocabulary_upgrades": [],
+                "tone_check": {"classification": "Informative"},
+                "relevance_warnings": [{"passage": paragraphs[0],
+                    "explanation": "This passage closes the talk instead of developing the stated task-management problem.",
+                    "suggestion": "Explain the difficulties with managing tasks; move the conclusion to the closing."}]}
+    monkeypatch.setattr(api, "analyze_script", analyze)
+    return calls
+
+
+def test_save_warning_preserves_script_revision_history_and_generation_list(setup, monkeypatch):
+    c = setup
+    calls = install_save_warning(c, monkeypatch)
+    before = [p.current_text for p in c.parts]
+    response = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    assert isinstance(response, api.SaveScriptWarningResponse)
+    assert response.warnings[0].passage == "Thank you for listening. Our solution is already complete."
+    assert [p.current_text for p in c.parts] == before
+    assert c.transcript.revision == 1
+    assert not list(c.session.scalars(select(TranscriptVersion)))
+    assert api._pending_generation_drafts(c.session, c.presentation) == []
+    assert len(calls) == 1 and calls[0][1]["text"] == "Manage team tasks"
+
+
+def test_confirm_warning_saves_exact_edits_with_no_second_ai_call(setup, monkeypatch):
+    c = setup
+    calls = install_save_warning(c, monkeypatch)
+    response = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    saved = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c, response.review_id), c.session, c.user)
+    assert saved.revision == 2
+    assert saved.paragraphs[0].current == "Thank you for listening. Our solution is already complete."
+    assert len(calls) == 1
+    assert len(list(c.session.scalars(select(TranscriptVersion)))) == 2
+    assert c.session.get(TranscriptGenerationDraft, response.review_id) is None
+
+
+def test_changed_text_cannot_reuse_save_warning_approval(setup, monkeypatch):
+    c = setup
+    install_save_warning(c, monkeypatch)
+    response = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    with pytest.raises(HTTPException) as error:
+        api.save_transcript_script(c.presentation.id, 1, warning_save_request(c, response.review_id, "Different text"), c.session, c.user)
+    assert error.value.status_code == 409
+    assert c.transcript.revision == 1
+
+
+def test_warning_check_failure_still_saves_without_overwriting_text(setup, monkeypatch):
+    c = setup
+    def fail(*args, **kwargs):
+        raise RuntimeError("Provider unavailable")
+    monkeypatch.setattr(api, "analyze_script", fail)
+    result = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    assert result.revision == 2
+    assert result.paragraphs[0].current == "Thank you for listening. Our solution is already complete."
+
+
+def test_save_warning_is_not_accepted_by_generation_endpoint(setup, monkeypatch):
+    c = setup
+    install_save_warning(c, monkeypatch)
+    response = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    with pytest.raises(HTTPException) as error:
+        api.accept_generation_draft(c.presentation.id, response.review_id, c.session, c.user)
+    assert error.value.status_code == 409
+    assert c.transcript.revision == 1
+
+
+def test_relevance_review_quotes_only_actual_script_and_keeps_one_call(monkeypatch):
+    from app.services import transcript_enhancer as service
+    calls = []
+    def feedback(prompt, **kwargs):
+        calls.append(prompt)
+        return {"tone_check": {"classification": "Informative", "confidence": .9, "rationale": "Clear."},
+                "relevance_warnings": [
+                    {"passage": "Our solution is complete.", "explanation": "A mismatch.", "suggestion": "Describe the problem."},
+                    {"passage": "Invented quote", "explanation": "A mismatch.", "suggestion": "Change this."}]}
+    monkeypatch.setattr(service, "_request_json", feedback)
+    result = service.analyze_script(["Our solution is complete."], {"title": "Problem", "text": "Task updates are lost."})
+    assert len(calls) == 1
+    assert len(result["relevance_warnings"]) == 1
+    assert "Task updates are lost." in calls[0]
+    assert "Allow hooks, brief transitions" in calls[0]
+
+
+def test_stale_save_warning_cannot_overwrite_a_newer_save(setup, monkeypatch):
+    c = setup
+    install_save_warning(c, monkeypatch)
+    response = api.save_transcript_script(c.presentation.id, 1, warning_save_request(c), c.session, c.user)
+    c.parts[0].current_text = "Newer saved content."
+    c.transcript.revision = 2
+    c.session.commit()
+    with pytest.raises(HTTPException) as error:
+        api.save_transcript_script(c.presentation.id, 1, warning_save_request(c, response.review_id), c.session, c.user)
+    assert error.value.status_code == 409
+    assert c.parts[0].current_text == "Newer saved content."
+
+
+def test_save_warning_and_confirmation_serialize_through_http(setup, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from app.db.session import get_db_session
+    c = setup
+    calls = install_save_warning(c, monkeypatch)
+    app = create_app()
+    app.dependency_overrides[api.authenticated_user] = lambda: c.user
+    app.dependency_overrides[get_db_session] = lambda: c.session
+    client = TestClient(app)
+    path = f"/api/v1/presentations/{c.presentation.id}/transcript/slides/1"
+    body = warning_save_request(c).model_dump(mode="json")
+    response = client.patch(path, json=body)
+    assert response.status_code == 200
+    review = response.json()
+    assert review["confirmation_required"] is True
+    assert review["warnings"][0]["explanation"]
+    body["confirm_review_id"] = review["review_id"]
+    saved = client.patch(path, json=body)
+    assert saved.status_code == 200
+    assert saved.json()["revision"] == 2
+    assert saved.json()["paragraphs"][0]["current"] == body["paragraphs"][0]["text"]
+    assert len(calls) == 1

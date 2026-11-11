@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect } from "react";
 
-import { isAuth0Configured, useAuth } from "@/components/auth/auth-provider";
+import { useAuth } from "@/components/auth/auth-provider";
 
 const publicRoutes = new Set(["/", "/auth/callback"]);
 
@@ -29,6 +29,5 @@ function ProtectedRouteBoundary({ children }: Readonly<{ children: ReactNode }>)
 }
 
 export function AuthRouteGuard({ children }: Readonly<{ children: ReactNode }>) {
-  if (!isAuth0Configured) return children;
   return <ProtectedRouteBoundary>{children}</ProtectedRouteBoundary>;
 }

@@ -30,6 +30,7 @@ from app.services.gesture_evidence import BackgroundMotion, MovementTracker, sav
 from app.services.gesture_rules import pattern_key, prepare_gesture_events
 from app.services.motion_intervals import union_intervals
 from app.services.pose_coverage import PoseCoverage
+from app.services.pose_geometry import hand_segment, segment_distance
 from app.services.practice_processing import PracticeProgress, run_practice_tracks
 from app.services.speech_evidence import coach_speech_moments, save_audio_excerpts, speech_moments
 from app.services.speech_timing import audio_silences, contextualize_pace
@@ -1235,10 +1236,28 @@ def classify_pose(keypoints: list[tuple[float, float, float]],
     if wrist_distance <= 0.35 and wrist_y >= shoulder_y + torso_height * 0.55:
         # Hands resting together at the abdomen need not be down at the hips.
         clasp_score = max(clasp_score, 0.8)
+    # Separated wrists do not imply separated hands: two inward forearms
+    # can end in touching palms/fingers while the wrists remain farther apart.
+    hand_gap = None
+    if left_elbow is not None and right_elbow is not None:
+        left_hand = hand_segment(keypoints, 7, 9, shoulder_width)
+        right_hand = hand_segment(keypoints, 8, 10, shoulder_width)
+        inward = (
+            (left_wrist[0] - left_elbow[0]) * shoulder_direction > shoulder_width * 0.12
+            and (right_elbow[0] - right_wrist[0]) * shoulder_direction > shoulder_width * 0.12
+        )
+        if left_hand and right_hand:
+            hand_gap = segment_distance(left_hand, right_hand) / shoulder_width
+            if (inward and wrist_distance <= 0.9 and hand_gap <= 0.35
+                    and abs(left_wrist[1] - right_wrist[1]) <= shoulder_width * 0.2
+                    and wrist_y >= shoulder_y + torso_height * 0.55
+                    and abs((left_wrist[0] + right_wrist[0]) / 2 - center_x) <= shoulder_width * 0.3):
+                clasp_score = max(clasp_score, 0.8)
     if clasp_score > 0:
         evidence["hands_clasped_low"] = {
             "body_part": "both hands", "wrist_separation": round(wrist_distance, 3),
             "hand_height_fraction": round((wrist_y - shoulder_y) / torso_height, 3),
+            "estimated_hand_gap": round(hand_gap, 3) if hand_gap is not None else None,
         }
 
     if left_elbow is None or right_elbow is None:

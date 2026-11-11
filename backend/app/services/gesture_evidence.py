@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from app.services.motion_intervals import motion_pattern
+from app.services.pose_geometry import hand_segment, point_segment_distance
 
 logger = logging.getLogger(__name__)
 
@@ -166,13 +167,17 @@ class MovementTracker:
         # Relative torso movement reduces sensitivity to whole-frame translation.
         self.samples.append((timestamp, (shoulder - hip) / width, hip, width))
         self.samples = [s for s in self.samples if timestamp - s[0] <= 8]
-        near = any(
-            points[i][2] >= 0.5
-            and points[0][2] >= 0.5
-            and math.dist(points[i][:2], points[0][:2]) / width < 0.60
-            and points[i][1] <= points[0][1] + width * 0.35
-            for i in (9, 10)
-        )
+        near_hands = []
+        for elbow, wrist in ((7, 9), (8, 10)):
+            if min(points[wrist][2], points[0][2]) < 0.5:
+                continue
+            wrist_near = (math.dist(points[wrist][:2], points[0][:2]) / width < 0.60
+                          and points[wrist][1] <= points[0][1] + width * 0.35)
+            segment = hand_segment(points, elbow, wrist, width)
+            hand_near = segment is not None and point_segment_distance(points[0], segment) / width <= 0.35
+            if wrist_near or hand_near:
+                near_hands.append(wrist)
+        near = bool(near_hands)
         if near and not self.near:
             self.near_since = timestamp
             if not self.touches or timestamp - self.touches[-1] >= 1.5:
@@ -189,7 +194,7 @@ class MovementTracker:
             or (self.near_since is not None and timestamp - self.near_since >= 1.0)
         ):
             result["hand_near_face"] = 0.8
-            wrist = min((i for i in (9, 10) if points[i][2] >= 0.5),
+            wrist = min(near_hands,
                         key=lambda i: math.dist(points[i][:2], points[0][:2]))
             self.evidence["hand_near_face"] = {
                 "body_part": "your left hand" if wrist == 9 else "your right hand",

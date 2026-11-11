@@ -39,6 +39,7 @@ from app.services.transcript_enhancer import (
     analyze_script,
     enhance_selection,
     generate_script,
+    ScriptRelevanceWarning,
 )
 
 router = APIRouter(
@@ -213,7 +214,16 @@ class SaveParagraph(BaseModel):
     text: str
 
 
+class SaveScriptWarningResponse(BaseModel):
+    confirmation_required: Literal[True] = True
+    review_id: uuid.UUID
+    slide_number: int
+    title: str | None
+    warnings: list[ScriptRelevanceWarning]
+
+
 class SaveScriptRequest(BaseModel):
+    confirm_review_id: uuid.UUID | None = None
     slide_transcript_id: uuid.UUID
     base_revision: int = Field(ge=1)
     paragraphs: list[SaveParagraph] = Field(min_length=1)
@@ -1363,14 +1373,14 @@ def _changed_words(before: str, after: str) -> list[str]:
     return changes
 
 
-@router.patch("/slides/{slide_number}", response_model=SlideTranscriptResponse)
+@router.patch("/slides/{slide_number}", response_model=SlideTranscriptResponse | SaveScriptWarningResponse)
 def save_transcript_script(
     presentation_id: uuid.UUID,
     slide_number: int,
     request: SaveScriptRequest,
     session: Session = Depends(get_db_session),
     user=Depends(authenticated_user),
-) -> SlideTranscriptResponse:
+) -> SlideTranscriptResponse | SaveScriptWarningResponse:
     presentation = owned_presentation(session, user.id, presentation_id)
     slide = _slide_for_number(session, presentation, slide_number)
     _lock_slide(session, slide)
@@ -1390,6 +1400,49 @@ def save_transcript_script(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown paragraph."
         )
+
+    current = [item.text.strip() for item in request.paragraphs if item.text.strip()]
+    submitted_edits = [item.model_dump(mode="json") for item in request.paragraphs]
+    analysis = None
+    if request.confirm_review_id:
+        review = session.get(TranscriptGenerationDraft, request.confirm_review_id)
+        if (review is None or review.slide_id != slide.id or review.status != "manual-review"
+                or (review.base_transcript_id, review.base_revision) != (transcript.id, transcript.revision)):
+            raise HTTPException(409, "This save review is no longer current. Review your edits again.")
+        checked = json.loads(review.generated_result)
+        if checked["edits"] != submitted_edits:
+            raise HTTPException(409, "Your text changed after the warning. Review these edits again.")
+        analysis = checked["feedback"]
+        session.delete(review)
+    elif current:
+        changes = [part for item in request.paragraphs
+                   for part in _changed_words(before_text.get(item.id, ""), item.text.strip())]
+        try:
+            analysis = analyze_script(
+                current, source_context={**(slide.extracted_content or {}), "title": slide.title},
+                vocabulary_text=changes,
+            )
+        except Exception:
+            logger.exception("Script feedback unavailable while saving presentation=%s slide=%s",
+                             presentation.id, slide.slide_number)
+        warnings = (analysis or {}).get("relevance_warnings", [])
+        if warnings:
+            # Reuse pending transcript review storage. Manual reviews have their
+            # own status and are never returned or accepted as generated scripts.
+            session.execute(delete(TranscriptGenerationDraft).where(
+                TranscriptGenerationDraft.slide_id == slide.id,
+                TranscriptGenerationDraft.status == "manual-review",
+            ))
+            review = TranscriptGenerationDraft(
+                slide_id=slide.id, base_transcript_id=transcript.id, base_revision=transcript.revision,
+                before_text=json.dumps(list(before_text.values()), ensure_ascii=False),
+                generated_result=json.dumps({"edits": submitted_edits, "feedback": analysis}, ensure_ascii=False),
+                settings="{}", status="manual-review",
+            )
+            session.add(review)
+            session.commit()
+            return SaveScriptWarningResponse(review_id=review.id, slide_number=slide.slide_number,
+                                             title=slide.title, warnings=warnings)
 
     _record_version(session, transcript, "saved")
     retained_ids = set(submitted_ids)
@@ -1443,21 +1496,10 @@ def save_transcript_script(
         session.flush()
     transcript.revision += 1
     session.flush()
-    current = [item.current_text for item in saved_paragraphs if item.current_text]
-    if not current:
+    if analysis is None:
         _clear_analysis(session, transcript)
     else:
-        try:
-            analysis = analyze_script(current, vocabulary_text=vocabulary_changes)
-        except Exception:
-            logger.exception(
-                "Coaching analysis failed after manual edit for presentation %s slide %s",
-                presentation.id,
-                slide.slide_number,
-            )
-            _clear_analysis(session, transcript)
-        else:
-            _apply_analysis(session, transcript, analysis)
+        _apply_analysis(session, transcript, analysis)
     session.add(
         TranscriptRevision(
             slide_transcript_id=transcript.id,

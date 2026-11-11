@@ -127,3 +127,6 @@
   .landing-hero { container-type:size; }
   .landing-product { width:100%; max-width:min(100%, calc((100cqh - 90px) * 1.85)); justify-self:end; }
 }
+
+.landing-guest-entry { margin-top: 12px; }
+.landing-guest-entry .landing-signin { font-size: 13px; }

@@ -125,7 +125,7 @@ function UploadIcon() {
 export default function UploadPracticePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, isGuest } = useAuth();
   const fileInput = useRef<HTMLInputElement>(null);
   const requestedSession = searchParams.get("session");
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -220,6 +220,18 @@ export default function UploadPracticePage() {
   const stage = !report || report.status === "queued" ? "Waiting to start"
     : report.progress_percent < 20 ? "Preparing your recording"
     : report.progress_percent < 95 ? "Reviewing body language and speech" : "Saving your report";
+  useEffect(() => {
+    if (!isGuest || requestedSession) return;
+    let active = true;
+    void getAccessToken().then(token => fetch(`${apiBaseUrl}/api/v1/practice/upload/sessions`, { headers: { Authorization: `Bearer ${token}` } }))
+      .then(async response => {
+        if (!response.ok) throw new Error("The sample report could not be loaded.");
+        const reports: PracticeReport[] = await response.json();
+        if (active && reports.length) router.replace(`/upload-practice?session=${reports[0].id}`);
+      }).catch(error => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [isGuest, requestedSession, getAccessToken, router]);
+
   return <main className={`practice-page${!requestedSession ? " practice-upload-page" : ""}`}>
     <nav className="practice-nav" aria-label="Workspace navigation">
       <div className="practice-nav-brand"><Link href="/home"><Brand /></Link><span>Upload Practice</span></div>
@@ -227,7 +239,7 @@ export default function UploadPracticePage() {
     </nav>
     <div className="practice-scroll"><div className="practice-content">
       {error && <div className="practice-error" role="alert">{error}</div>}
-      {!requestedSession ? <>
+      {!requestedSession && isGuest ? <section className="practice-panel practice-loading"><p className="practice-eyebrow">Sample recording</p><h2>Explore Upload Practice</h2><p className="practice-muted">The sample recording report is being prepared. You can try Live Practice or upload slides while you wait.</p><Link className="practice-button" href="/home">Back to workspace</Link></section> : !requestedSession ? <>
         <header className="practice-heading"><div><h1>Learn from your last rehearsal.</h1><p className="practice-muted">Review your delivery and choose what to practise next.</p></div></header>
         <section className="practice-upload-layout">
           <div className="practice-upload" aria-busy={uploading}><span className="practice-upload-icon"><UploadIcon /></span><h3>Start with a rehearsal video</h3><p>For body-language feedback, keep your face, arms, and torso visible.<br />Use clear audio for speech analysis.</p>
@@ -245,7 +257,7 @@ export default function UploadPracticePage() {
       </> : loading || !report ? <section className="practice-panel practice-loading"><h2>Loading your report…</h2><p className="practice-muted">Retrieving your rehearsal feedback.</p></section>
         : processing ? <section className="practice-panel practice-loading" aria-live="polite"><p className="practice-eyebrow">Analyzing recording</p><h2>{stage}</h2><ProcessingSteps steps={["Waiting to start", "Prepare recording", "Review body language and speech together", "Save report"]} current={report.status === "queued" ? 0 : report.progress_percent < 20 ? 1 : report.progress_percent < 95 ? 2 : 3} />{report.status === "processing" && report.progress_percent >= 20 && <PracticeProcessing tracks={report.processing_tracks} />}<p className="practice-muted">You can return to your workspace while this finishes.</p><div className="practice-progress" role="progressbar" aria-valuenow={report.progress_percent} aria-valuemin={0} aria-valuemax={100}><div style={{ width: report.progress_percent + "%" }} /></div><p className="practice-muted">{report.progress_percent}% complete</p></section>
         : report.status === "failed" ? <section className="practice-panel practice-loading"><p className="practice-eyebrow">Needs attention</p><h2>Analysis could not finish</h2><p className="practice-muted">{report.processing_error_message ?? "Please upload the recording again."}</p><div className="practice-actions" style={{ marginTop: 20 }}><Link className="practice-button" href="/upload-practice">Upload another</Link><button type="button" className="practice-button danger" onClick={() => setConfirmDelete(true)}>Delete report</button></div></section>
-        : <ReportView key={report.id} accessToken={accessToken} deleteReport={async () => setConfirmDelete(true)} report={report} retrySpeech={retrySpeech} retryingSpeech={retryingSpeech} />}
+        : <ReportView readOnly={isGuest} key={report.id} accessToken={accessToken} deleteReport={async () => setConfirmDelete(true)} report={report} retrySpeech={retrySpeech} retryingSpeech={retryingSpeech} />}
     </div></div>
     {confirmDelete && <DeletePracticeReportDialog busy={deleting} onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteReport()} />}
   </main>;
@@ -262,7 +274,7 @@ function FindingCard({ finding, accessToken, moment }: { finding: CoachingFindin
   </article>;
 }
 
-function ReportView({ report, accessToken, deleteReport, retrySpeech, retryingSpeech }: { report: PracticeReport; accessToken: string | null; deleteReport: () => Promise<void>; retrySpeech: () => Promise<void>; retryingSpeech: boolean }) {
+function ReportView({ readOnly, report, accessToken, deleteReport, retrySpeech, retryingSpeech }: { readOnly: boolean; report: PracticeReport; accessToken: string | null; deleteReport: () => Promise<void>; retrySpeech: () => Promise<void>; retryingSpeech: boolean }) {
   const reportElement = useRef<HTMLDivElement>(null);
   const [activeSection, setActiveSection] = useState("recording-gestures");
   const reportTabs = [
@@ -295,7 +307,7 @@ function ReportView({ report, accessToken, deleteReport, retrySpeech, retryingSp
           <div><dt>Recording length</dt><dd>{formatTime(report.duration_seconds)}</dd></div>
           <div><dt>Reviewed on</dt><dd>{formatDate(report.completed_at ?? report.created_at)}</dd></div>
         </dl>
-        <div className="practice-actions"><Link className="practice-button" href="/upload-practice"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>New recording</Link><button className="practice-button danger" onClick={() => void deleteReport()} type="button"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>Delete report</button></div>
+        {!readOnly && <div className="practice-actions"><Link className="practice-button" href="/upload-practice"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>New recording</Link><button className="practice-button danger" onClick={() => void deleteReport()} type="button"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>Delete report</button></div>}
       </div>
     </header>
     <div className="practice-report-layout">
@@ -314,7 +326,7 @@ function ReportView({ report, accessToken, deleteReport, retrySpeech, retryingSp
       </div>
       <div className="practice-report-body">
     <div id="recording-gestures" role="tabpanel" aria-labelledby="recording-gestures-tab" hidden={activeSection !== "recording-gestures"} className="practice-report-section"><PracticeGestures events={report.pose_events} token={accessToken} tracking={report.pose_tracking} duration={report.duration_seconds ?? 0} /></div>
-    {activeSection !== "recording-gestures" && missingSpeech > 0 && <div className="practice-panel" role="status" style={{ padding: "16px 20px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}><p className="practice-muted" style={{ margin: 0 }}>{speechBusy ? "Generating the missing speech feedback. Your existing results are kept." : `Feedback is missing for ${missingSpeech} speech moment${missingSpeech === 1 ? "" : "s"}. Retry using your saved excerpts—no new upload needed.`}</p><button className="practice-button" type="button" disabled={speechBusy} onClick={() => void retrySpeech()}>{speechBusy ? "Generating feedback…" : "Retry speech feedback"}</button></div>}
+    {!readOnly && activeSection !== "recording-gestures" && missingSpeech > 0 && <div className="practice-panel" role="status" style={{ padding: "16px 20px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}><p className="practice-muted" style={{ margin: 0 }}>{speechBusy ? "Generating the missing speech feedback. Your existing results are kept." : `Feedback is missing for ${missingSpeech} speech moment${missingSpeech === 1 ? "" : "s"}. Retry using your saved excerpts—no new upload needed.`}</p><button className="practice-button" type="button" disabled={speechBusy} onClick={() => void retrySpeech()}>{speechBusy ? "Generating feedback…" : "Retry speech feedback"}</button></div>}
     <div id="recording-clarity" role="tabpanel" aria-labelledby="recording-clarity-tab" hidden={activeSection !== "recording-clarity"} className="practice-report-sections practice-report-section">
       <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">Clarity & fluency</p><h2>Speech moments to practise</h2><p className="practice-muted">Review what you said, listen to the moment, and try the suggested delivery.</p></div></div>
         {speechFindings.length ? <div className="practice-clarity-findings">{speechFindings.map(f =>
