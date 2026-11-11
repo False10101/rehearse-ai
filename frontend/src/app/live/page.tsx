@@ -129,9 +129,9 @@ function CoachingStatusIcon({ kind }: { kind: "eyes" | "head" | "body" | "hands"
 
 function liveStatusStyle(value: string, active: boolean, paused: boolean) {
   if (paused || ["Waiting", "Not assessed", "Calibrating"].includes(value)) return "border-[#e8e4ed] bg-[#f7f5f9] text-[#9a91a5]";
-  if (active) return "border-[#efc5a1] bg-[#fff3e6] text-[#ad601c]";
+  if (active) return "border-[#efb6bd] bg-[#fff0f2] text-[#b33349]";
   if (["Looking forward", "Facing forward", "Steady"].includes(value)) return "border-[#d6eade] bg-[#f1faf5] text-[#39815b]";
-  return "border-[#eee0bc] bg-[#fffbef] text-[#9d792d]";
+  return "border-[#efc5cb] bg-[#fff5f6] text-[#ad3b4e]";
 }
 
 
