@@ -107,7 +107,7 @@ def test_moderate_repeated_tilts_are_detected():
     import math
 
     tracker = HeadMovementTracker()
-    results = [tracker.observe(i / 5, tilted_head_points(0.12 * math.sin(i / 5 * 1.8)))
+    results = [tracker.observe(i / 5, tilted_head_points(0.18 * math.sin(i / 5 * 1.8)))
                for i in range(60)]
     assert any("repeated_head_movement" in result for result in results)
 
@@ -255,3 +255,42 @@ def test_forearm_estimate_does_not_promote_chest_gesture_or_uncertain_elbow():
         p = head_points()
         p[7], p[9] = elbow, wrist
         assert all("hand_near_face" not in tracker.observe(i / 5, p) for i in range(25))
+
+
+def test_brief_background_flow_dropout_keeps_measured_sway_history():
+    import math
+    tracker = MovementTracker()
+    found = False
+    for i in range(45):
+        shift = 25 * math.sin(i / 5 * 2.5)
+        p = [(x + shift, y, c) for x, y, c in points()]
+        result = tracker.observe(i / 5, p, camera_offset_x=None if i % 6 == 0 else 0)
+        found |= 'repeated_swaying' in result
+    assert found
+
+
+def test_extended_background_loss_resets_sideways_shift_history():
+    tracker = MovementTracker()
+    for i in range(6):
+        tracker.observe(i / 5, points(), camera_offset_x=0)
+    tracker.observe(1.6, points(), camera_offset_x=None)
+    assert tracker.body_samples == []
+    assert tracker.body_origin is None
+
+
+def test_small_eye_line_changes_are_not_repeated_head_tilts():
+    import math
+    tracker = HeadMovementTracker()
+    for i in range(60):
+        assert not tracker.observe(i / 5, tilted_head_points(.10 * math.sin(i / 5 * 2)))
+
+
+def test_repeated_head_turns_with_short_holds_keep_the_turn_label():
+    tracker = HeadMovementTracker()
+    found = []
+    positions = [0, -.4, -.4, -.4, 0, .4, .4, .4, 0, -.4, -.4, 0]
+    for i in range(len(positions) * 3):
+        if tracker.observe(i / 5, head_points(positions[i // 3])):
+            found.append(tracker.evidence['repeated_head_movement']['axis'])
+    assert 'side to side' in found
+    assert 'in sideways tilts' not in found

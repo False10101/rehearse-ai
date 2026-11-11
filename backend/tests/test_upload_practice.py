@@ -545,3 +545,40 @@ def test_hand_estimate_does_not_join_hands_on_hips_or_open_gestures():
                      "9": (115, 215, 1), "10": (185, 215, 0.1)}),
     ):
         assert classify_pose(p).get("hands_clasped_low", 0) < 0.72
+
+
+def test_wide_sideways_reach_does_not_require_a_straight_elbow():
+    scores = classify_pose(keypoints(**{'7': (60, 105, 1), '9': (35, 65, 1)}))
+    assert scores['gesture_box_excursion'] >= .76
+
+
+def test_bent_elbow_near_body_is_not_a_wide_reach():
+    scores = classify_pose(keypoints(**{'7': (85, 110, 1), '9': (75, 70, 1)}))
+    assert scores['gesture_box_excursion'] == 0
+
+
+def test_continuous_wide_reach_keeps_one_event_when_stronger_arm_changes(tmp_path):
+    collector = PoseEventCollector(tmp_path, 100, .2)
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    for i in range(30):
+        side = 'left' if i % 2 else 'right'
+        collector.observe(i / 5, {'gesture_box_excursion': .85}, frame, keypoints(),
+                          {'gesture_box_excursion': {'body_part': f'your {side} arm'}})
+    events = collector.finish_all()
+    assert len(events) == 1
+    assert {m['body_part'] for m in events[0]['measurements']} == {'your left arm', 'your right arm'}
+    from app.services.gesture_rules import prepare_gesture_events
+    event = prepare_gesture_events(events)[0]
+    assert event['label'] == 'Wide sideways arm reaches'
+    assert 'your arms' in event['coaching']['observation']
+
+
+def test_separate_wide_reaches_are_not_merged_across_a_rest(tmp_path):
+    collector = PoseEventCollector(tmp_path, 100, .2)
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    for i in range(35):
+        active = i < 10 or i >= 25
+        collector.observe(i / 5, {'gesture_box_excursion': .85} if active else {},
+                          frame, keypoints(),
+                          {'gesture_box_excursion': {'body_part': 'your left arm'}} if active else {})
+    assert len(collector.finish_all()) == 2

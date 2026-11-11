@@ -13,7 +13,7 @@ WORDING_VERSION = "gesture-wording-v4"
 def pattern_key(event: dict) -> tuple:
     samples = event.get("measurements") or []
     kind = event.get("type")
-    if kind in {"arms_crossed", "hand_near_face", "gesture_box_excursion"}:
+    if kind in {"arms_crossed", "hand_near_face"}:
         return (kind, _most_common(samples, "posture", ""),
                 _most_common(samples, "body_part", ""))
     return (kind,)
@@ -86,6 +86,8 @@ def gesture_label(event: dict) -> str:
             return f"{body.removeprefix('your ').capitalize()} across to opposite shoulder" if body else "Arm across to opposite shoulder"
         return "Arm crossing across torso"
     if kind == "gesture_box_excursion":
+        if len({s.get("body_part") for s in samples if s.get("body_part")}) > 1:
+            return "Wide sideways arm reaches"
         return f"{body.removeprefix('your ').capitalize()} extended sideways" if body else "Wide sideways reach"
     if kind == "hand_near_face":
         return f"{body.removeprefix('your ').capitalize()} near face" if body else "Hand near face"
@@ -97,6 +99,10 @@ def measured_coaching(event: dict) -> dict:
     kind = event["type"]
     samples = event.get("measurements") or []
     body = _most_common(samples, "body_part", "your arm")
+    if kind == "gesture_box_excursion" and len(
+        {s.get("body_part") for s in samples if s.get("body_part")}
+    ) > 1:
+        body = "your arms"
     posture = _most_common(samples, "posture", "across your torso")
     axis = _most_common(samples, "axis", "side to side")
     duration = float(event.get("duration_seconds", 0))
@@ -122,7 +128,7 @@ def measured_coaching(event: dict) -> dict:
         ),
         "gesture_box_excursion": (
             "Bring the extended arm back after the emphasis",
-            f"You held {body} nearly straight out to the side for about {duration_text}.",
+            f"You held {body} far out to the side for about {duration_text}.",
             "A reach held after the emphasis can draw attention away from the next point.",
             "Complete the reach with the word it emphasizes, then bring the arm back.",
         ),

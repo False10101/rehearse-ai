@@ -103,18 +103,19 @@ class HeadMovementTracker:
         self.samples.append((timestamp, smooth))
         # Review bursts of repeated movement, not ordinary audience scanning.
         # Head position alone cannot establish gaze, script reading, or intent.
-        self.samples = [s for s in self.samples if timestamp - s[0] <= 4.8]
+        self.samples = [s for s in self.samples if timestamp - s[0] <= 6]
         if self.samples[-1][0] - self.samples[0][0] < 1.2:
             return {}
         for axis, step, extent in (
-            (0, 0.18, 0.45), (1, 0.09, 0.22), (2, 0.12, 0.28), (3, 0.08, 0.16)
+            (0, 0.18, 0.45), (1, 0.09, 0.22), (2, 0.12, 0.28), (3, 0.14, 0.28)
         ):
-            # Repeated sideways tilts can build more slowly than rapid turns.
-            # Keep the audience-turn rule strict rather than weakening all axes.
-            window = 4.8 if axis == 3 else 3.2
-            required_reversals = 2 if axis == 3 else 3
+            # Yaw can include short holds at each side; sustained audience
+            # scanning still fails the repeated-reversal requirement.
+            window = 6 if axis == 0 else 4.8 if axis == 3 else 3.2
+            required_reversals = 2 if axis in {0, 3} else 3
             series = [(s[0], s[1][axis]) for s in self.samples if timestamp - s[0] <= window]
-            pattern = motion_pattern(series, step, extent, required_reversals)
+            pattern = motion_pattern(series, step, extent, required_reversals,
+                                     settling_seconds=2 if axis == 0 else None)
             if pattern:
                 self.evidence = {"repeated_head_movement": {
                     "body_part": "head", "axis": (
@@ -214,8 +215,12 @@ class MovementTracker:
         # invisible to shoulder-minus-hip lean alone. Only measure it when the
         # background supplies camera-motion compensation.
         if camera_offset_x is None:
-            self.body_samples.clear()
-            self.body_origin = None
+            # One missing background-flow frame is not a presenter tracking
+            # loss. Retain recent measured positions, without adding an
+            # uncorrected position, so a brief flow dropout cannot erase turns.
+            if self.body_samples and timestamp - self.body_samples[-1][0] > 0.5:
+                self.body_samples.clear()
+                self.body_origin = None
         else:
             corrected = hip - camera_offset_x
             if self.body_origin is None:

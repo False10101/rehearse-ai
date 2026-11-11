@@ -11,6 +11,13 @@ from app.services.transcript_enhancer import _request_json
 logger = logging.getLogger(__name__)
 
 
+def pause_boundaries(pause: dict, words: list[dict]) -> dict:
+    before = [w for w in words if float(w["end"]) <= pause["start_seconds"] + 0.15]
+    after = [w for w in words if float(w["start"]) >= pause["end_seconds"] - 0.15]
+    return {**pause, "words_before": " ".join(w["word"] for w in before[-6:]),
+            "words_after": " ".join(w["word"] for w in after[:6])}
+
+
 def speech_moments(speech: dict, findings: list[dict], duration: float) -> list[dict]:
     words = speech.get("timed_transcript", [])
     if not words:
@@ -61,13 +68,17 @@ def speech_moments(speech: dict, findings: list[dict], duration: float) -> list[
                     and float(w["start"]) < min(duration, end + 10)
                 ),
                 "pace_measurements": [
-                    {k: s[k] for k in ("start_seconds", "end_seconds", "words_per_minute")}
+                    {k: s[k] for k in ("start_seconds", "end_seconds", "words_per_minute",
+                                       "active_words_per_minute", "quiet_seconds", "type") if k in s}
                     for s in speech.get("pace_samples", [])
                     if float(s["end_seconds"]) > start and float(s["start_seconds"]) < end
                 ],
-                "pause_measurements": [p for p in speech.get("pause_events", [])
+                "pause_measurements": [pause_boundaries(p, words) for p in speech.get("pause_events", [])
                                        if p["end_seconds"] > start and p["start_seconds"] < end],
                 "coaching_status": "unavailable",
+                "event_transcript": " ".join(w["word"] for w in words
+                    if float(w["end"]) > candidate["start"]
+                    and float(w["start"]) < candidate["end"]),
                 "observation": None,
                 "recommendation": None,
                 "suggested_delivery": None,
@@ -113,6 +124,19 @@ distinguish meaningful qualifiers from dispensable repetition. For pauses, ident
 the transition on both sides rather than assuming hesitation. Estimated timestamps
 cannot establish exact silence lengths. Only pause_measurements marked audio
 have measured quiet audio; do not infer hesitation or intention from them.
+For a slow event in the middle of a recording, address the measured slow passage:
+suggest connecting its words into natural phrases and reducing drawn-out spacing,
+using an exact phrase from event_transcript as the example. Do not prescribe
+additional pauses as the main correction for slow delivery. Keep useful sentence
+boundaries; do not turn the advice into a demand to rush. Context may explain an
+intentional slowdown, but do not default to praising reflective delivery merely
+because the subject is reflective. Active WPM and quiet seconds distinguish word
+delivery from silence; discuss the measured distinction, without claiming to hear it.
+For a measured pause, words_before and words_after locate that precise silence.
+State that the pause occurs after words_before and before words_after. Do not guess
+a different split elsewhere in the sentence. If either side is absent, do not
+invent it. The recommendation may move the pause to a complete thought, clearly
+distinguishing the actual location from the proposed new location.
 Nearby context is context only; your
 anchor and suggested example must come from the selected excerpt.
 DATA:\n""" + json.dumps(
@@ -122,6 +146,9 @@ DATA:\n""" + json.dumps(
                         for k in (
                             "id",
                             "kind",
+                            "event_start_seconds",
+                            "event_end_seconds",
+                            "event_transcript",
                             "transcript_excerpt",
                             "timing_source",
                             "speech_position",

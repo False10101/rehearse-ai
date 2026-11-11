@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.services.speech_timing import audio_silences, contextualize_pace
-from app.services.upload_practice import _pause_events
+from app.services.upload_practice import _pace_samples, _pause_events
 
 
 def test_pause_requires_audio_evidence_not_just_a_transcription_gap():
@@ -61,3 +61,19 @@ def test_markedly_slow_speech_and_fast_speech_are_still_reviewable():
     contextualize_pace(samples, [{"end": 45}], [])
     assert samples[1]["type"] == "fast"
     assert samples[-1]["type"] == "slow"
+
+
+@pytest.mark.parametrize("count, expected", [(29, "slow"), (30, "slow"), (31, "steady")])
+def test_slow_pace_includes_120_wpm(count, expected):
+    words = [{"word": "word", "start": i * 15 / count, "end": (i + 1) * 15 / count}
+             for i in range(count)]
+    assert _pace_samples(words)[0]["type"] == expected
+
+
+def test_short_phrase_gaps_do_not_hide_slow_delivery():
+    samples = [sample(0, 112, 28)]
+    contextualize_pace(samples, [{"end": 60}], [
+        {"start": 2, "end": 3}, {"start": 5, "end": 6},
+        {"start": 8, "end": 9}, {"start": 11, "end": 12},
+    ])
+    assert samples[0]["type"] == "slow"

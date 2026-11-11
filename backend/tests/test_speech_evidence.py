@@ -224,3 +224,39 @@ def test_source_anchor_without_excerpt_specific_advice_is_retried(monkeypatch):
     assert len(calls) == 3
     assert moments[0]["coaching_status"] == "unavailable"
     assert "recommendation" not in moments[0]
+
+
+def test_measured_pause_sends_actual_words_on_each_side():
+    words = [{'word': 'even', 'start': 0, 'end': .4},
+             {'word': 'when', 'start': .4, 'end': 1},
+             {'word': 'our', 'start': 6, 'end': 6.3},
+             {'word': 'schedule', 'start': 6.3, 'end': 7}]
+    speech = {'timed_transcript': words, 'timing_source': 'word',
+              'pause_events': [{'start_seconds': 1, 'end_seconds': 6, 'duration_seconds': 5,
+                                'timing_source': 'audio'}]}
+    findings = [{'id': 'long-pause', 'category': 'Speech', 'start_seconds': 1, 'end_seconds': 6}]
+    moment = speech_evidence.speech_moments(speech, findings, 10)[0]
+    pause = moment['pause_measurements'][0]
+    assert pause['words_before'] == 'even when'
+    assert pause['words_after'] == 'our schedule'
+
+
+def test_slow_coaching_gets_event_words_and_active_pace(monkeypatch):
+    import json
+    speech = {'timed_transcript': [{'word': 'Connect', 'start': i, 'end': i + .5} for i in range(35)],
+              'pace_events': [{'type': 'slow', 'start_seconds': 10, 'end_seconds': 20}],
+              'pace_samples': [{'start_seconds': 5, 'end_seconds': 20, 'words_per_minute': 112,
+                                'active_words_per_minute': 150, 'quiet_seconds': 3.8, 'type': 'slow'}]}
+    moments = speech_evidence.speech_moments(speech, [], 35)
+    def request(prompt, **kwargs):
+        data = json.loads(prompt.split('DATA:\n', 1)[1])[0]
+        assert data['event_start_seconds'] == 10
+        assert data['event_transcript']
+        assert data['pace_measurements'][0]['active_words_per_minute'] == 150
+        assert 'Do not prescribe\nadditional pauses as the main correction' in prompt
+        return {'moments': [{'id': 1, 'anchor': 'Connect', 'observation': 'Connect is spaced out.',
+                             'recommendation': 'Keep Connect moving within its phrase.',
+                             'suggested_delivery': 'Connect'}]}
+    monkeypatch.setattr(speech_evidence, '_request_json', request)
+    speech_evidence.coach_speech_moments(moments)
+    assert moments[0]['coaching_status'] == 'ready'

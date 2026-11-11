@@ -33,7 +33,7 @@ from app.services.pose_coverage import PoseCoverage
 from app.services.pose_geometry import hand_segment, segment_distance
 from app.services.practice_processing import PracticeProgress, run_practice_tracks
 from app.services.speech_evidence import coach_speech_moments, save_audio_excerpts, speech_moments
-from app.services.speech_timing import audio_silences, contextualize_pace
+from app.services.speech_timing import SLOW_PACE_WPM, audio_silences, contextualize_pace
 from app.services.storage import storage_path, upload_practice_evidence_key
 
 logger = logging.getLogger(__name__)
@@ -706,7 +706,7 @@ def _pace_samples(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
         duration = max(0.01, window_end - window_start)
         wpm = len(window_words) / (duration / 60)
         if duration >= window_seconds:
-            pace_type = "slow" if wpm < 100 else "fast" if wpm > 180 else "steady"
+            pace_type = "slow" if wpm <= SLOW_PACE_WPM else "fast" if wpm > 180 else "steady"
             samples.append(
                 {
                     "start_seconds": round(window_start, 2),
@@ -1189,20 +1189,20 @@ def classify_pose(keypoints: list[tuple[float, float, float]],
     def lateral_extension(shoulder, elbow, wrist, outward_direction) -> float:
         if elbow is None or wrist is None:
             return 0.0
-        elbow_angle = _angle_degrees(shoulder, elbow, wrist)
+        # Half a shoulder-width beyond the shoulder puts the hand about a
+        # full shoulder-width from the torso centre. Elbow bend is irrelevant.
         horizontal_reach = (wrist[0] - shoulder[0]) * outward_direction / shoulder_width
         elbow_reach = (elbow[0] - shoulder[0]) * outward_direction / shoulder_width
         vertical_reach = abs(wrist[1] - shoulder[1]) / shoulder_width
         within_height = shoulder_y - torso_height * 0.35 <= wrist[1] <= hip_y + torso_height * 0.1
         if (
-            elbow_angle < 145
-            or horizontal_reach < 0.9
-            or elbow_reach < 0.35
+            horizontal_reach < 0.5
+            or elbow_reach < 0.2
             or vertical_reach > horizontal_reach * 0.8
             or not within_height
         ):
             return 0.0
-        return min(1.0, 0.8 + (horizontal_reach - 0.9) * 0.35)
+        return min(1.0, 0.8 + (horizontal_reach - 0.5) * 0.35)
 
     # A visible extended arm does not depend on tracking the other hand.
     extensions = [

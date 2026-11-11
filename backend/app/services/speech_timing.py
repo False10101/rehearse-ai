@@ -8,6 +8,7 @@ from statistics import median
 import numpy as np
 
 logger = logging.getLogger(__name__)
+SLOW_PACE_WPM = 120
 
 
 def audio_silences(path: Path) -> list[dict]:
@@ -67,7 +68,16 @@ def contextualize_pace(samples: list[dict], words: list[dict], silences: list[di
         if sample["type"] == "slow":
             # Silence is reviewed separately. A modest closing slowdown is not
             # promoted to an issue; unusually low active delivery remains visible.
-            pause_explains = silences is not None and articulation >= 100
+            # Ordinary gaps between phrases are part of delivery pace. Only
+            # separately reviewable long pauses can explain away a slow window.
+            long_pause_seconds = sum(
+                overlap for s in silences or []
+                if (overlap := max(0, min(end, s["end"]) - max(start, s["start"]))) >= 2
+            )
+            pace_without_long_pauses = sample["word_count"] * 60 / max(
+                1, end - start - long_pause_seconds
+            )
+            pause_explains = long_pause_seconds > 0 and pace_without_long_pauses > SLOW_PACE_WPM
             ordinary_closing = closing and sample["words_per_minute"] >= baseline * 0.65
             if pause_explains or ordinary_closing:
                 sample["type"] = "steady"

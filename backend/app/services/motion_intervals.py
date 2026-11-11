@@ -4,7 +4,7 @@ from statistics import median
 
 
 def motion_pattern(samples: list[tuple[float, float]], step: float, extent: float,
-                   required_reversals: int) -> dict | None:
+                   required_reversals: int, settling_seconds: float | None = None) -> dict | None:
     if len(samples) < 3:
         return None
     recent = [value for timestamp, value in samples
@@ -21,6 +21,8 @@ def motion_pattern(samples: list[tuple[float, float]], step: float, extent: floa
         cadence = median([b - a for a, b in zip(activity_times, activity_times[1:])]) \
             if len(activity_times) > 2 else 0.2
         settle = max(0.9, min(1.5, cadence * 3))
+        if settling_seconds is not None:
+            settle = settling_seconds
         if last_motion is not None and timestamp - last_motion > settle + 1e-6:
             component = []
             activity_times = []
