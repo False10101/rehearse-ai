@@ -73,7 +73,7 @@ def test_update_preserves_ids_other_content_feedback_and_slide_count(setup, monk
     monkeypatch.setattr(generator, "_items_from_model", model)
     for theme in ("forest", "ocean"):
         response = api.generate_agenda(p.id, api.GenerateAgendaRequest(
-            layout="editorial-list", theme=theme, action=action), session, user)
+            layout="editorial-list", theme=theme, action=action, background="peach"), session, user)
         assert response.inserted_slide_number == 2
         assert p.slide_count == 3 and len(Deck(source).slides) == 3
         assert [r.id for r in session.scalars(select(Slide).order_by(Slide.slide_number))] == ids
@@ -82,6 +82,9 @@ def test_update_preserves_ids_other_content_feedback_and_slide_count(setup, monk
         assert analysis.raw_output["per_slide"] == original_feedback["per_slide"]
         assert analysis.raw_output["cohesion_feedback"] == original_feedback["cohesion_feedback"]
         assert rows[1].extracted_content["agenda_theme"] == theme
+        assert rows[1].extracted_content["agenda_background"] == "peach"
+        assert analysis.raw_output["generated_agenda"]["background"] == "peach"
+        assert str(Deck(source).slides[1].background.fill.fore_color.rgb) == "FFEADB"
         assert rows[1].extracted_content["agenda_sections"]
     assert model.call_count == (2 if action == "regenerate" else 0)
 

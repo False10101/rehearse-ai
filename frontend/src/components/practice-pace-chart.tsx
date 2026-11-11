@@ -86,7 +86,7 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
       <div className="practice-chart-caption" aria-live="polite">
         {inspected ? <strong>{time(inspected.start_seconds)}–{time(inspected.end_seconds)} · {Math.round(inspected.words_per_minute)} WPM over 15 seconds</strong>
           : <span>Hover over the line to inspect a passage. Click an orange or blue point to review that passage below.</span>}
-        <span>Estimated words per minute.</span>
+        <span>Measured {time(samples[0].start_seconds)}–{time(samples[samples.length - 1].end_seconds)}. Each point sits at the middle of its 15-second passage.</span>
       </div>
       </div>
     </> : <p className="practice-empty">This recording has no complete pace timeline. A new analysis is needed to draw the chart; any saved intervals remain below.</p>}

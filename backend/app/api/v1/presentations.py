@@ -144,6 +144,7 @@ class GenerateAgendaRequest(BaseModel):
         "capsule-columns",
     ]
     theme: Literal["violet", "ocean", "forest", "sunset", "midnight", "slate"]
+    background: Literal["white", "cream", "peach", "sage", "blue", "lavender", "gray"] = "white"
 
 
 class GenerateAgendaResponse(BaseModel):
@@ -565,12 +566,14 @@ def generate_agenda(
                     source_path, generated_path, [slide.extracted_content for slide in slides],
                     inserted_slide_number, request.layout, request.theme,
                     regenerate=request.action == "regenerate",
+                    background=request.background,
                 )
                 items = [section["title"] for section in sections]
             else:
                 items, insert_after_slide = generate_agenda_deck(
                     source_path, generated_path, [slide.extracted_content for slide in slides],
                     request.layout, request.theme,
+                    background=request.background,
                 )
                 inserted_slide_number = insert_after_slide + 1
                 # Recover the full section text from the freshly rendered native layout.
@@ -615,6 +618,7 @@ def generate_agenda(
                             "agenda_sections": sections,
                             "agenda_layout": request.layout,
                             "agenda_theme": request.theme,
+                            "agenda_background": request.background,
                         }
                     )
                     slide.title = "Agenda"
@@ -652,6 +656,7 @@ def generate_agenda(
                     "sections": sections,
                     "layout": request.layout,
                     "theme": request.theme,
+                    "background": request.background,
                 }
                 analysis.agenda_status = "found"
                 analysis.raw_output = raw_output

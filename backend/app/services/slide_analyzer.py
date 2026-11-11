@@ -931,11 +931,12 @@ def prepare_presentation_slides(
                 "agenda_items": generated_agenda.get("items", []),
                 "agenda_layout": generated_agenda.get("layout"),
                 "agenda_theme": generated_agenda.get("theme"),
+                "agenda_background": generated_agenda.get("background", "white"),
             }
     for item in slide_data:
         previous = existing_agendas.get(item["num"])
         if previous:
-            for key in ("generated_by", "agenda_items", "agenda_sections", "agenda_layout", "agenda_theme"):
+            for key in ("generated_by", "agenda_items", "agenda_sections", "agenda_layout", "agenda_theme", "agenda_background"):
                 if key in previous:
                     item[key] = previous[key]
     if on_progress:

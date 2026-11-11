@@ -14,6 +14,11 @@ AGENDA_LAYOUTS = {
     "capsule-columns": "Diamond capsules",
 }
 
+AGENDA_BACKGROUNDS = {
+    "white": "FFFFFF", "cream": "FFF2DF", "peach": "FFEADB",
+    "sage": "EAF1E8", "blue": "EAF0F8", "lavender": "F0EBF7", "gray": "EFF0F2",
+}
+
 # Each theme supplies coordinated section accents, not one repeated color.
 AGENDA_THEMES = {
     "violet": ["7051BA", "8B5EA7", "5268AC", "A54C83", "557F95", "76649C"],
@@ -234,6 +239,7 @@ def agenda_catalog() -> dict:
     return {
         "width": 1280,
         "height": 720,
+        "backgrounds": AGENDA_BACKGROUNDS,
         "themes": {name: theme_colors(name) for name in AGENDA_THEMES},
         "templates": [
             {"id": layout, "name": name, "nodes": agenda_scene(PREVIEW_ITEMS, layout)}

@@ -456,8 +456,8 @@ def test_speech_metrics_retains_repeated_contextual_verbal_habits(monkeypatch) -
 def test_pace_never_extrapolates_a_short_final_window() -> None:
     words = [{"word": "test", "start": i * 0.5, "end": i * 0.5 + 0.4} for i in range(43)]
     samples = upload_practice._pace_samples(words)
-    assert [s["start_seconds"] for s in samples] == [0, 5]
-    assert all(s["end_seconds"] - s["start_seconds"] == 15 for s in samples)
+    assert [s["start_seconds"] for s in samples] == [0, 5, 6.4]
+    assert all(abs(s["end_seconds"] - s["start_seconds"] - 15) < 1e-6 for s in samples)
     assert upload_practice._pace_samples(words[:20]) == []
 
 
@@ -582,3 +582,12 @@ def test_separate_wide_reaches_are_not_merged_across_a_rest(tmp_path):
                           frame, keypoints(),
                           {'gesture_box_excursion': {'body_part': 'your left arm'}} if active else {})
     assert len(collector.finish_all()) == 2
+
+
+def test_fractional_start_does_not_drop_last_complete_pace_window():
+    words = [{'word': 'test', 'start': .04 + i * .5, 'end': .04 + i * .5 + .4}
+             for i in range(135)]
+    samples = upload_practice._pace_samples(words)
+    assert any(s['start_seconds'] == 50.04 and s['end_seconds'] == 65.04 for s in samples)
+    assert samples[-1]['end_seconds'] == round(words[-1]['end'], 2)
+    assert all(abs(s['end_seconds'] - s['start_seconds'] - 15) < 1e-6 for s in samples)

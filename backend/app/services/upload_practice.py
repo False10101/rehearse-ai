@@ -699,13 +699,18 @@ def _pace_samples(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     window_seconds = 15.0
     step_seconds = 5.0
     samples: list[dict[str, Any]] = []
-    window_start = first
-    while window_start + window_seconds <= last:
+    count = max(0, math.floor((last - first - window_seconds + 1e-9) / step_seconds) + 1)
+    starts = [first + index * step_seconds for index in range(count)]
+    # Include a complete trailing window ending at the final spoken word.
+    # Never divide a short leftover fragment by 15 seconds.
+    if starts and last - (starts[-1] + window_seconds) > 1e-6:
+        starts.append(last - window_seconds)
+    for window_start in starts:
         window_end = window_start + window_seconds
         window_words = [item for item in words if window_start <= float(item["start"]) < window_end]
         duration = max(0.01, window_end - window_start)
         wpm = len(window_words) / (duration / 60)
-        if duration >= window_seconds:
+        if duration + 1e-9 >= window_seconds:
             pace_type = "slow" if wpm <= SLOW_PACE_WPM else "fast" if wpm > 180 else "steady"
             samples.append(
                 {
@@ -718,7 +723,6 @@ def _pace_samples(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "context": " ".join(item["word"] for item in window_words[:16]),
                 }
             )
-        window_start += step_seconds
     # A personal baseline also catches pronounced changes within the broad
     # reference range. These are review candidates, never automatic mistakes.
     if len(samples) >= 5:

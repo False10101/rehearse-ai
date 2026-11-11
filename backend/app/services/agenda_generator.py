@@ -13,6 +13,7 @@ from pptx.util import Emu, Pt
 
 from app.services.agenda_layouts import (
     AGENDA_LAYOUTS,
+    AGENDA_BACKGROUNDS,
     AGENDA_THEMES,
     agenda_scene,
     theme_colors,
@@ -133,10 +134,11 @@ def _items_from_model(slides: list[dict]) -> tuple[list[dict[str, str]], int]:
 
 
 def draw_agenda(
-    slide, items: list[dict[str, str]], layout: str, theme: str, slide_width: int, slide_height: int
+    slide, items: list[dict[str, str]], layout: str, theme: str, slide_width: int, slide_height: int,
+    background: str = "white",
 ) -> None:
     """Render editable native shapes from the same scene used by the picker."""
-    colors = theme_colors(theme)
+    colors = {**theme_colors(theme), "background": AGENDA_BACKGROUNDS[background]}
     scene = agenda_scene(items, layout)
     scale = min(slide_width / 1280, slide_height / 720)
     offset_x = (slide_width - 1280 * scale) / 2
@@ -154,7 +156,7 @@ def draw_agenda(
         )
 
     slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = rgb("paper")
+    slide.background.fill.fore_color.rgb = rgb("background")
     # Uploaded decks can have logos/placeholders on their master. This agenda owns
     # its canvas; other slides and their masters remain untouched.
     slide._element.set("showMasterSp", "0")
@@ -221,7 +223,8 @@ def draw_agenda(
 
 
 def generate_agenda_deck(
-    source_path: Path, destination: Path, slides: list[dict], layout: str, theme_name: str
+    source_path: Path, destination: Path, slides: list[dict], layout: str, theme_name: str,
+    background: str = "white",
 ) -> tuple[list[str], int]:
     if layout not in AGENDA_LAYOUTS or theme_name not in AGENDA_THEMES:
         raise ValueError("Unknown agenda layout or theme.")
@@ -231,7 +234,7 @@ def generate_agenda_deck(
     if not layouts:
         raise AgendaGenerationError("This presentation has no usable slide layout.")
     agenda = deck.slides.add_slide(min(layouts, key=lambda candidate: len(candidate.placeholders)))
-    draw_agenda(agenda, items, layout, theme_name, deck.slide_width, deck.slide_height)
+    draw_agenda(agenda, items, layout, theme_name, deck.slide_width, deck.slide_height, background)
     slide_ids = deck.slides._sldIdLst
     agenda_slide_id = slide_ids[-1]
     slide_ids.remove(agenda_slide_id)
@@ -268,7 +271,8 @@ def existing_agenda_sections(deck, number: int, content: dict) -> list[dict[str,
 
 
 def update_agenda_deck(source_path: Path, destination: Path, slides: list[dict],
-                       number: int, layout: str, theme: str, regenerate: bool):
+                       number: int, layout: str, theme: str, regenerate: bool,
+                       background: str = "white"):
     """Redraw only the marked generated slide; preserve its identity and position."""
     if layout not in AGENDA_LAYOUTS or theme not in AGENDA_THEMES:
         raise ValueError("Unknown agenda layout or theme.")
@@ -283,7 +287,7 @@ def update_agenda_deck(source_path: Path, destination: Path, slides: list[dict],
     else:
         sections = existing_agenda_sections(deck, number, content)
     draw_agenda(deck.slides[number - 1], sections, layout, theme,
-                deck.slide_width, deck.slide_height)
+                deck.slide_width, deck.slide_height, background)
     destination.parent.mkdir(parents=True, exist_ok=True)
     deck.save(destination)
     return sections

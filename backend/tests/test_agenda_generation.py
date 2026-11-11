@@ -240,3 +240,19 @@ def test_update_never_rewrites_an_original_agenda(tmp_path, monkeypatch):
                                      [{"num": 1, "title": "Agenda"}], 1,
                                      "paired-sections", "violet", regenerate=True)
     model.assert_not_called()
+
+
+@pytest.mark.parametrize('background', ['white', 'cream', 'peach', 'sage', 'blue', 'lavender', 'gray'])
+def test_background_changes_canvas_only_preserving_text_and_icons(tmp_path, background):
+    from app.services.agenda_layouts import AGENDA_BACKGROUNDS
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    generator.draw_agenda(slide, PREVIEW_ITEMS[:5], 'capsule-columns', 'sunset',
+                          deck.slide_width, deck.slide_height)
+    original = [shape._element.xml for shape in slide.shapes]
+    generator.draw_agenda(slide, PREVIEW_ITEMS[:5], 'capsule-columns', 'sunset',
+                          deck.slide_width, deck.slide_height, background)
+    assert [shape._element.xml for shape in slide.shapes] == original
+    target = tmp_path / 'background.pptx'
+    deck.save(target)
+    assert str(Presentation(target).slides[0].background.fill.fore_color.rgb) == AGENDA_BACKGROUNDS[background]

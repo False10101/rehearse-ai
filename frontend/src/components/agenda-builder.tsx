@@ -13,13 +13,14 @@ type SceneNode = NodeBase & (
   | { kind: "text"; w: number; h: number; size: number; bold: boolean; align: string; serif: boolean; lines: string[] }
 );
 type Template = { id: string; name: string; nodes: SceneNode[] };
-type Catalog = { width: number; height: number; themes: Record<string, Record<string, string>>; templates: Template[] };
+type Catalog = { width: number; height: number; backgrounds: Record<string, string>; themes: Record<string, Record<string, string>>; templates: Template[] };
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2";
 
-function AgendaPreview({ template, palette, label }: { template: Template; palette: Record<string, string>; label: string }) {
+function AgendaPreview({ template, palette, background, label }: { template: Template; palette: Record<string, string>; background: string; label: string }) {
   const color = (token: string) => `#${palette[token] ?? "253047"}`;
   return (
     <svg className="block aspect-video h-auto w-full bg-white" viewBox="0 0 1280 720" role="img" aria-label={label}>
+      <rect width="1280" height="720" fill={`#${background}`} />
       {template.nodes.map((node, index) => {
         if (node.kind === "line") return <line key={index} x1={node.x} y1={node.y} x2={node.x2} y2={node.y2} stroke={color(node.color)} strokeWidth={node.weight} />;
         if (node.kind === "circle") return <ellipse key={index} cx={node.x + node.w / 2} cy={node.y + node.h / 2} rx={node.w / 2} ry={node.h / 2} fill="none" stroke={color(node.color)} strokeWidth={2.5} />;
@@ -32,9 +33,9 @@ function AgendaPreview({ template, palette, label }: { template: Template; palet
   );
 }
 
-export function AgendaLaunch({ presentationId, accessToken, action = "create", initialLayout = "paired-sections", initialTheme = "violet" }: {
+export function AgendaLaunch({ presentationId, accessToken, action = "create", initialLayout = "paired-sections", initialTheme = "violet", initialBackground = "white" }: {
   presentationId: string; accessToken: string | null;
-  action?: "create" | "regenerate" | "design"; initialLayout?: string; initialTheme?: string;
+  action?: "create" | "regenerate" | "design"; initialLayout?: string; initialTheme?: string; initialBackground?: string;
 }) {
   const designOnly = action === "design";
   const updating = action !== "create";
@@ -42,6 +43,7 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
   const [open, setOpen] = useState(false);
   const [layout, setLayout] = useState(initialLayout);
   const [theme, setTheme] = useState(initialTheme);
+  const [background, setBackground] = useState(initialBackground);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -55,7 +57,8 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
   useEffect(() => {
     setLayout(initialLayout);
     setTheme(initialTheme);
-  }, [initialLayout, initialTheme]);
+    setBackground(initialBackground);
+  }, [initialLayout, initialTheme, initialBackground]);
 
   useEffect(() => {
     if (!open || !accessToken || catalog) return;
@@ -101,7 +104,7 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
     try {
       const response = await fetch(`${apiBaseUrl}/api/v1/presentations/${presentationId}/agenda`, {
         method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ layout, theme, action }),
+        body: JSON.stringify({ layout, theme, background, action }),
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok || typeof payload !== "object" || payload === null || !("inserted_slide_number" in payload) || typeof payload.inserted_slide_number !== "number") {
@@ -141,20 +144,28 @@ export function AgendaLaunch({ presentationId, accessToken, action = "create", i
               <p className="mb-4 mt-0 text-xs font-semibold uppercase tracking-wider text-[#8e809c]">Choose a layout</p>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
                 {catalog.templates.map((item, index) => <button className={`overflow-hidden rounded-xl border bg-white p-1.5 text-left transition disabled:opacity-60 ${layout === item.id ? "border-[#9b7be3] ring-1 ring-[#9b7be3]" : "border-[#e3ddea] hover:border-[#b8a2d8]"} ${focus}`} key={item.id} aria-pressed={layout === item.id} disabled={creating} onClick={() => setLayout(item.id)} type="button">
-                  <div className="overflow-hidden rounded-md border border-[#f0edf4]"><AgendaPreview template={item} palette={palette ?? catalog.themes.violet} label={item.name} /></div>
+                  <div className="overflow-hidden rounded-md border border-[#f0edf4]"><AgendaPreview template={item} palette={palette ?? catalog.themes.violet} background={catalog.backgrounds[background] ?? "FFFFFF"} label={item.name} /></div>
                   <span className="flex items-center gap-2 px-1 pb-1 pt-2 text-xs font-medium text-[#70607f]"><span className="text-[10px] text-[#a596b1]">0{index + 1}</span>{item.name}{layout === item.id ? <span className="ml-auto text-[#8761cd]" aria-hidden="true">✓</span> : null}</span>
                 </button>)}
               </div>
             </aside>
             <div className="agenda-design-preview flex min-w-0 flex-col justify-center p-5 sm:p-7">
               <div className="mb-4 flex items-center justify-between"><h3 className="m-0 text-sm font-semibold">{selected?.name}</h3><span className="text-xs text-[#93849f]">Example content · up to 6 sections</span></div>
-              <div className="overflow-hidden rounded-xl border border-[#e5dfea] shadow-[0_12px_35px_rgba(48,32,70,0.06)]">{selected && palette ? <AgendaPreview template={selected} palette={palette} label={`${selected.name} in ${theme}`} /> : null}</div>
+              <div className="overflow-hidden rounded-xl border border-[#e5dfea] shadow-[0_12px_35px_rgba(48,32,70,0.06)]">{selected && palette ? <AgendaPreview template={selected} palette={palette} background={catalog.backgrounds[background] ?? "FFFFFF"} label={`${selected.name} in ${theme}`} /> : null}</div>
               <fieldset className="m-0 mt-7 min-w-0 border-0 p-0" disabled={creating}>
                 <legend className="mb-3 text-xs font-semibold text-[#81718f]">Color palette</legend>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                   {Object.entries(catalog.themes).map(([name, colors]) => <button className={`rounded-lg border p-2 transition ${theme === name ? "border-[#a083d2] bg-[#f7f3fc]" : "border-[#e8e1ee] bg-white hover:border-[#c1afda]"} ${focus}`} key={name} onClick={() => setTheme(name)} type="button" aria-pressed={theme === name}>
                     <span className="flex overflow-hidden rounded-sm" aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((i) => <span className="h-3 flex-1" key={i} style={{ backgroundColor: `#${colors[`accent${i}`]}` }} />)}</span>
                     <span className="mt-2 block text-[11px] capitalize text-[#80708d]">{name}</span>
+                  </button>)}
+                </div>
+              </fieldset>
+              <fieldset className="m-0 mt-6 min-w-0 border-0 p-0" disabled={creating}>
+                <legend className="mb-3 text-xs font-semibold text-[#81718f]">Slide background</legend>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(catalog.backgrounds).map(([name, hex]) => <button key={name} type="button" aria-pressed={background === name} onClick={() => setBackground(name)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs capitalize ${background === name ? "border-[#a083d2] bg-[#f7f3fc] text-[#594176]" : "border-[#e8e1ee] bg-white text-[#80708d]"} ${focus}`}>
+                    <span className="h-5 w-5 rounded-full border border-black/10" style={{ backgroundColor: `#${hex}` }} aria-hidden="true" />{name}
                   </button>)}
                 </div>
               </fieldset>
