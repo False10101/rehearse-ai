@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<rect width="1200" height="630" fill="#f8f7fc"/>
+<path d="M934 0H1200V630H1080Z" fill="#eee9fa"/>
+<rect x="64" y="57" width="58" height="58" rx="17" fill="#7860f4"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="93" y="97" text-anchor="middle" font-size="34" font-weight="800" fill="white">R</text>
+<text x="140" y="97" font-size="34" font-weight="700" letter-spacing="-1.2" fill="#292333">Rehearse AI</text>
+<text x="64" y="204" font-size="20" fill="#7054c8">Your presentation coach</text>
+<g font-size="72" font-weight="700" letter-spacing="-3">
+<text x="60" y="291" fill="#292333">Clearer slides.</text>
+<text x="60" y="374" fill="#292333">Stronger words.</text>
+<text x="60" y="457" fill="#7956c5">Better delivery.</text>
+</g>
+<path d="M64 510H1136" stroke="#dfd9ea"/>
+<text x="64" y="555" font-size="19" fill="#635b71">Slide Analyzer · Transcript Enhancer · Live Practice · Upload Practice</text>
+<text x="64" y="590" font-size="17" fill="#8b8199">rehearse-ai.pyrx.net</text>
+</g>
+<g transform="translate(905 215)" fill="none" stroke="#8061cb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<rect width="205" height="145" rx="14" fill="#fff" stroke="#d5c9ea"/>
+<path d="M33 41h139M33 65h95M33 89h62" stroke="#c0afd9"/>
+<path d="m109 111 20 19 40-42"/>
+<path d="M75 145v25m55-25v25M52 171h101" stroke="#9982c0"/>
+</g>
+</svg>
