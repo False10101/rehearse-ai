@@ -81,39 +81,37 @@ function MiniSlide({ slide, accessToken }: {
     </div>);
 }
 function useProtectedSlideImage(imageUrl: string | null, accessToken: string | null) {
-    const [source, setSource] = useState<string | null>(null);
+    const [loaded, setLoaded] = useState<{ imageUrl: string; accessToken: string; source: string } | null>(null);
     useEffect(() => {
-        if (!imageUrl || !accessToken) {
-            setSource(null);
-            return;
-        }
-        let active = true;
+        if (!imageUrl || !accessToken) return;
+        const controller = new AbortController();
         let objectUrl: string | null = null;
         async function loadImage() {
             try {
                 const response = await fetch(`${apiBaseUrl}${imageUrl}`, {
                     headers: { Authorization: `Bearer ${accessToken}` },
+                    signal: controller.signal,
                 });
-                if (!response.ok)
-                    throw new Error("The rendered slide could not be loaded.");
-                objectUrl = URL.createObjectURL(await response.blob());
-                if (active)
-                    setSource(objectUrl);
+                if (!response.ok) throw new Error("The rendered slide could not be loaded.");
+                const blob = await response.blob();
+                if (controller.signal.aborted) return;
+                objectUrl = URL.createObjectURL(blob);
+                setLoaded({ imageUrl: imageUrl!, accessToken: accessToken!, source: objectUrl });
             }
             catch {
-                if (active)
-                    setSource(null);
+                if (!controller.signal.aborted) setLoaded(null);
             }
         }
         void loadImage();
         return () => {
-            active = false;
-            if (objectUrl)
-                URL.revokeObjectURL(objectUrl);
+            controller.abort();
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
     }, [accessToken, imageUrl]);
-    return source;
+    // Do not display the preceding slide while the current image is loading.
+    return loaded?.imageUrl === imageUrl && loaded?.accessToken === accessToken ? loaded.source : null;
 }
+
 function RenderedSlidePreview({ imageUrl, accessToken, title }: {
     imageUrl: string | null;
     accessToken: string | null;

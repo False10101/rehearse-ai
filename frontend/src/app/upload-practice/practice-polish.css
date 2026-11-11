@@ -113,3 +113,12 @@
  .practice-upload-page .practice-upload { padding:26px; }
  .practice-page .practice-report-header { padding-bottom:18px; }
 }
+
+.practice-filler-breakdown { margin-bottom:24px; }
+.practice-filler-breakdown h3 { margin:0 0 12px; font-size:15px; font-weight:600; color:var(--practice-text); }
+.practice-filler-breakdown table { width:100%; border-collapse:collapse; font-size:13px; text-align:left; }
+.practice-filler-breakdown th, .practice-filler-breakdown td { padding:10px 16px 10px 0; border-bottom:1px solid var(--practice-border, #e9e5ef); vertical-align:top; }
+.practice-filler-breakdown thead th { font-size:11px; font-weight:500; color:var(--practice-muted); }
+.practice-filler-breakdown tbody th { font-weight:600; color:var(--practice-text); width:22%; }
+.practice-filler-breakdown td { color:var(--practice-muted); font-variant-numeric:tabular-nums; }
+.practice-filler-breakdown td:last-child { overflow-wrap:anywhere; }

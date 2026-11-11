@@ -594,3 +594,20 @@ def test_fractional_start_does_not_drop_last_complete_pace_window():
     assert any(s['start_seconds'] == 50.04 and s['end_seconds'] == 65.04 for s in samples)
     assert samples[-1]['end_seconds'] == round(words[-1]['end'], 2)
     assert all(abs(s['end_seconds'] - s['start_seconds'] - 15) < 1e-6 for s in samples)
+
+
+def test_filler_coaching_includes_all_terms_not_only_most_frequent() -> None:
+    report = build_coaching_report({
+        "filler_events": [
+            {"term": "um", "timestamp_seconds": 2},
+            {"term": "um", "timestamp_seconds": 5},
+            {"term": "uh", "timestamp_seconds": 8},
+            {"term": "you know", "timestamp_seconds": 11},
+        ],
+    }, [])
+    finding = next(f for f in report["findings"] if f["id"] == "verbal-habit")
+    assert finding["headline"] == "Reduce repeated fillers"
+    assert "4 fillers" in finding["observation"]
+    assert "“um”: 2 times" in finding["observation"]
+    assert "“uh”: 1 time" in finding["observation"]
+    assert "“you know”: 1 time" in finding["observation"]

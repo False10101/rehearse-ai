@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -660,6 +660,9 @@ def generate_agenda(
                 }
                 analysis.agenda_status = "found"
                 analysis.raw_output = raw_output
+            # Redesign can leave every presentation field unchanged. Explicitly
+            # advance the revision used in slide-image URLs after replacing images.
+            presentation.updated_at = datetime.now(UTC)
             session.commit()
     except AgendaGenerationError as error:
         session.rollback()

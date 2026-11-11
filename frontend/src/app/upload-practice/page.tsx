@@ -263,6 +263,27 @@ export default function UploadPracticePage() {
   </main>;
 }
 
+function FillerBreakdown({ events }: { events: PracticeReport["filler_events"] }) {
+  const groups = new Map<string, number[]>();
+  for (const event of events) {
+    const term = event.term.trim().toLowerCase();
+    if (!term || !Number.isFinite(event.timestamp_seconds)) continue;
+    const times = groups.get(term) ?? [];
+    times.push(event.timestamp_seconds);
+    groups.set(term, times);
+  }
+  if (!groups.size) return null;
+  return <section className="practice-filler-breakdown" aria-label="Detected fillers">
+    <h3>Detected fillers</h3>
+    <table><thead><tr><th scope="col">Word or phrase</th><th scope="col">Count</th><th scope="col">When it occurred</th></tr></thead>
+      <tbody>{Array.from(groups, ([term, times]) => <tr key={term}>
+        <th scope="row">“{term}”</th><td>{times.length}</td>
+        <td>{times.sort((a, b) => a - b).map(formatTime).join(", ")}</td>
+      </tr>)}</tbody>
+    </table>
+  </section>;
+}
+
 function FindingCard({ finding, accessToken, moment }: { finding: CoachingFinding; accessToken: string | null; moment?: SpeechMoment }) {
   return <article className="practice-clarity-finding">
     <header><h3>{finding.headline}</h3><time>{formatTime(finding.start_seconds)}–{formatTime(finding.end_seconds)}</time></header>
@@ -329,6 +350,7 @@ function ReportView({ readOnly, report, accessToken, deleteReport, retrySpeech, 
     {!readOnly && activeSection !== "recording-gestures" && missingSpeech > 0 && <div className="practice-panel" role="status" style={{ padding: "16px 20px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}><p className="practice-muted" style={{ margin: 0 }}>{speechBusy ? "Generating the missing speech feedback. Your existing results are kept." : `Feedback is missing for ${missingSpeech} speech moment${missingSpeech === 1 ? "" : "s"}. Retry using your saved excerpts—no new upload needed.`}</p><button className="practice-button" type="button" disabled={speechBusy} onClick={() => void retrySpeech()}>{speechBusy ? "Generating feedback…" : "Retry speech feedback"}</button></div>}
     <div id="recording-clarity" role="tabpanel" aria-labelledby="recording-clarity-tab" hidden={activeSection !== "recording-clarity"} className="practice-report-sections practice-report-section">
       <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">Clarity & fluency</p><h2>Speech moments to practise</h2><p className="practice-muted">Review what you said, listen to the moment, and try the suggested delivery.</p></div></div>
+        <FillerBreakdown events={report.filler_events ?? []} />
         {speechFindings.length ? <div className="practice-clarity-findings">{speechFindings.map(f =>
           <FindingCard key={f.id} finding={f} accessToken={accessToken} moment={(report.speech_moments ?? []).find(m => m.kind === f.id)} />
         )}</div> : <p className="practice-empty">No additional speech coaching was returned.</p>}

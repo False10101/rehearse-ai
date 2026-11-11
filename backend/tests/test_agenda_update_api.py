@@ -72,9 +72,11 @@ def test_update_preserves_ids_other_content_feedback_and_slide_count(setup, monk
         side_effect=AssertionError("Design must not call AI"))
     monkeypatch.setattr(generator, "_items_from_model", model)
     for theme in ("forest", "ocean"):
+        previous_revision = p.updated_at
         response = api.generate_agenda(p.id, api.GenerateAgendaRequest(
             layout="editorial-list", theme=theme, action=action, background="peach"), session, user)
         assert response.inserted_slide_number == 2
+        assert p.updated_at.replace(tzinfo=None) > previous_revision.replace(tzinfo=None)
         assert p.slide_count == 3 and len(Deck(source).slides) == 3
         assert [r.id for r in session.scalars(select(Slide).order_by(Slide.slide_number))] == ids
         assert rows[0].extracted_content == original_content[0]

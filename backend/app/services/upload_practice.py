@@ -889,24 +889,25 @@ def build_coaching_report(
                 coaching_finding(
                     finding_id="verbal-habit",
                     category="Verbal clarity",
-                    headline=f"Reduce repeated use of “{top_term}”",
+                    headline="Reduce repeated fillers",
                     observation=(
-                        f"“{top_term}” appeared {top_count} times. Repeating the same verbal habit "
-                        "can make otherwise confident delivery sound less deliberate."
+                        f"Detected {len(filler_events)} fillers: "
+                        + "; ".join(f"“{term}”: {count} {'time' if count == 1 else 'times'}"
+                                    for term, count in filler_counts.items()) + "."
                     ),
                     impact=(
                         "Repeated verbal habits compete with the point you want the audience "
                         "to remember."
                     ),
                     recommendation=(
-                        f"When you feel “{top_term}” coming, replace it with a brief silent "
+                        "Replace unnecessary fillers with a brief silent "
                         "pause or "
                         "move directly to the next precise statement."
                     ),
                     drill=(
                         f"Repeat the section around "
                         f"{format_timestamp(float(first_event.get('timestamp_seconds', 0)))} and "
-                        f"remove every unnecessary “{top_term}”."
+                        "remove its unnecessary fillers."
                     ),
                     start_seconds=float(first_event.get("timestamp_seconds", 0)),
                     end_seconds=float(first_event.get("timestamp_seconds", 0)) + 2,
