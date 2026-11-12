@@ -116,7 +116,7 @@ function coachingCategory(kind: string): "Eyes" | "Head" | "Body" | "Hands" | "V
 const eventCategoryColors = {
   Eyes: { box: "border-[#d6dff5] bg-[#f4f7ff]", badge: "bg-[#e6edff] text-[#4c68a0]" },
   Head: { box: "border-[#efc9bf] bg-[#fff1ec]", badge: "bg-[#fbdacf] text-[#a34d38]" },
-  Body: { box: "border-[#cfe7df] bg-[#f2faf7]", badge: "bg-[#dff0e9] text-[#43836b]" },
+  Body: { box: "border-[#ded2ef] bg-[#f7f2fc]", badge: "bg-[#ece1f7] text-[#79549a]" },
   Hands: { box: "border-[#efddc5] bg-[#fff9f0]", badge: "bg-[#f8ead5] text-[#9b7039]" },
   Visibility: { box: "border-[#efd6dd] bg-[#fff5f8]", badge: "bg-[#f8e3ea] text-[#a36077]" },
 };
