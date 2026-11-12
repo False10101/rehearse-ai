@@ -315,6 +315,8 @@ function ReportView({ readOnly, report, accessToken, deleteReport, retrySpeech, 
     }
   };
   const speechFindings = report.coaching_findings.filter(f => f.id !== "pace-control" && f.category !== "Body language");
+  const clarityMoments = (report.speech_moments ?? []).filter(m => m.kind !== "fast" && m.kind !== "slow");
+  const clarityTitles: Record<string, string> = { "verbal-habit": "Fillers in this passage", "long-pause": "Pause between thoughts", "repeated-starts": "Repeated words or phrases", "sensitive-term": "Wording to review" };
   const speechBusy = retryingSpeech || ["queued", "running"].includes(report.speech_coaching_status ?? "");
   const missingSpeech = (report.speech_moments ?? []).filter(m => m.coaching_status !== "ready").length;
   return <div ref={reportElement} className="practice-report-shell">
@@ -351,8 +353,13 @@ function ReportView({ readOnly, report, accessToken, deleteReport, retrySpeech, 
     <div id="recording-clarity" role="tabpanel" aria-labelledby="recording-clarity-tab" hidden={activeSection !== "recording-clarity"} className="practice-report-sections practice-report-section">
       <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">Clarity & fluency</p><h2>Speech moments to practise</h2><p className="practice-muted">Review what you said, listen to the moment, and try the suggested delivery.</p></div></div>
         <FillerBreakdown events={report.filler_events ?? []} />
-        {speechFindings.length ? <div className="practice-clarity-findings">{speechFindings.map(f =>
-          <FindingCard key={f.id} finding={f} accessToken={accessToken} moment={(report.speech_moments ?? []).find(m => m.kind === f.id)} />
+        {clarityMoments.length ? <div className="practice-clarity-findings">{clarityMoments.map(moment =>
+          <article key={moment.id} className="practice-clarity-finding">
+            <header><h3>{clarityTitles[moment.kind] ?? "Speech passage to review"}</h3><time>{formatTime(moment.event_start_seconds)}–{formatTime(moment.event_end_seconds)}</time></header>
+            <PracticeSpeechMoment moment={moment} accessToken={accessToken} presentation="review" />
+          </article>
+        )}</div> : speechFindings.length ? <div className="practice-clarity-findings">{speechFindings.map(f =>
+          <FindingCard key={f.id} finding={f} accessToken={accessToken} />
         )}</div> : <p className="practice-empty">No additional speech coaching was returned.</p>}
       </section>
     </div>

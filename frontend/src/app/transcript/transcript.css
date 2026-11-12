@@ -80,3 +80,32 @@
   .transcript-settings > div:last-child { padding-top:14px; }
   .transcript-workspace .transcript-document { padding-top:22px; }
 }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.transcript-workspace .transcript-header { height:80px; grid-template-columns:250px minmax(0,1fr) auto; }
+.transcript-layout { height:calc(100dvh - 80px); grid-template-columns:250px minmax(0,1fr) 450px; }
+.transcript-header h1 { font-size:22px; }
+.transcript-header > div:nth-of-type(1) > div { font-size:14px; }
+.transcript-header > div:last-child button, .transcript-header > div:last-child a { min-height:42px; font-size:14px; }
+.transcript-rail h2 { font-size:14px; }
+.transcript-rail > div:nth-child(2) { gap:12px; padding:12px; }
+.transcript-rail > div:nth-child(2) > button { padding:10px; }
+.transcript-workspace .transcript-stage { padding:32px 36px 24px; }
+.transcript-stage > div:first-child h2 { font-size:28px; }
+.transcript-stage > div:first-child p { font-size:13px; }
+.transcript-stage > div:first-child button, .transcript-stage > nav, .transcript-stage > nav button { font-size:14px; }
+.transcript-workspace .transcript-document { max-width:1100px; padding:40px 52px; }
+.transcript-workspace .transcript-editor { font-size:18px; line-height:1.9; margin-top:32px; }
+.transcript-document > div:first-child > div:first-child p:last-child { font-size:14px; }
+.transcript-document > div:first-child > div:first-child p:first-child, .transcript-document > p:last-child { font-size:13px; }
+.transcript-settings > div:first-child { padding:28px; }
+.transcript-settings > div:first-child h2 { font-size:22px; }
+.transcript-settings > div:last-child { padding:24px; gap:22px; }
+.transcript-settings > div:last-child > section { padding:22px; }
+.transcript-settings h3 { font-size:16px; }
+.transcript-settings p, .transcript-settings button, .transcript-settings select { font-size:14px; }
+.transcript-settings button, .transcript-settings select { min-height:40px; }
+.transcript-settings label, .transcript-settings .uppercase { font-size:13px; }
+}

@@ -75,3 +75,18 @@
   .slide-status-card h1 { font-size:22px; }
   .slide-status-stages > li + li { margin-top:14px; }
 }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+.agenda-overlay .agenda-dialog { max-width:1320px; height:min(880px,calc(100dvh - 80px)); }
+.agenda-dialog > header, .agenda-dialog > footer { padding:24px 30px; }
+.agenda-dialog > header h2 { font-size:23px; }
+.agenda-dialog > header p, .agenda-dialog > footer p { font-size:14px; }
+.agenda-design-layout { grid-template-columns:250px minmax(0,1fr); }
+.agenda-dialog .agenda-design-preview { padding:30px 36px; }
+.agenda-design-preview > div:nth-child(2) { max-width:800px; }
+.agenda-design-preview h3, .agenda-design-preview legend { font-size:15px; }
+.agenda-design-preview fieldset button { padding:10px; font-size:14px; }
+.agenda-design-preview fieldset button > span:last-child { font-size:13px; }
+.agenda-dialog > footer button { min-height:44px; font-size:15px; }
+}

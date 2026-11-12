@@ -28,3 +28,23 @@
 .deck-upload-content > footer { margin-top:24px; font-size:11px; color:#888393; }
 .deck-upload-content > footer a { color:#6b4fd3; margin-left:5px; text-decoration:none; }
 @media(max-height:740px) { .deck-upload-content { padding-top:28px; } .deck-upload-grid { margin-top:24px; } .deck-upload-picker { padding:26px; } .deck-upload-guide > div { padding:15px 0; } }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.deck-upload-nav { height:80px; padding:0 64px; }
+.deck-upload-nav a { font-size:16px; }
+.deck-upload-content { max-width:1500px; padding:64px 48px 40px; }
+.deck-upload-kicker { font-size:15px; }
+.deck-upload-content > header h1 { font-size:40px; }
+.deck-upload-content > header > p:last-child { font-size:18px; }
+.deck-upload-grid { gap:56px; margin-top:44px; }
+.deck-upload-picker { padding:54px 40px; }
+.deck-upload-picker h2 { font-size:23px; }
+.deck-upload-picker p { font-size:16px; }
+.deck-upload-picker button { font-size:16px; padding:14px 24px; }
+.deck-upload-picker small { font-size:13px; }
+.deck-upload-guide > h2 { font-size:17px; }
+.deck-upload-guide h3 { font-size:19px; }
+.deck-upload-guide p { font-size:16px; }
+}

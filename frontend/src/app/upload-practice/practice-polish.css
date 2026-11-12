@@ -126,3 +126,28 @@
 .practice-gesture-loading { position:absolute; inset:0; display:grid; place-items:center; background:#f3f1f7; }
 .practice-gesture-spinner { width:30px; height:30px; border:3px solid #ded8ed; border-top-color:#7560c3; border-radius:50%; animation:practice-replay-spin .8s linear infinite; }
 @keyframes practice-replay-spin { to { transform:rotate(360deg); } }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.practice-page .practice-nav { height:80px; min-height:80px; padding:0 48px; }
+.practice-page .practice-content { max-width:2000px; padding:40px 48px; }
+.practice-upload-page .practice-content { max-width:1500px; }
+.practice-page .practice-button { font-size:14px; min-height:42px; padding:10px 16px; }
+.practice-page .practice-eyebrow, .practice-report-metadata dt { font-size:13px; }
+.practice-page .practice-muted, .practice-report-metadata dd { font-size:15px; }
+.practice-page .practice-report-identity h1 { font-size:30px; }
+.practice-page .practice-report-shell .practice-panel h2 { font-size:25px; }
+.practice-page .practice-gesture-track-label { font-size:14px; }
+.practice-page .practice-gesture-card { padding:30px 0 34px; gap:40px; }
+.practice-page .practice-gesture-coaching h3 { font-size:23px; }
+.practice-page .practice-gesture-explanation p, .practice-page .practice-gesture-action p, .practice-page .practice-clarity-columns p { font-size:16px; }
+.practice-page .practice-clarity-finding > header h3 { font-size:20px; }
+.practice-page .practice-clarity-finding { padding:28px 0 32px; }
+.practice-filler-breakdown h3 { font-size:20px; }
+.practice-filler-breakdown table { font-size:16px; }
+.practice-filler-breakdown thead th { font-size:14px; }
+.practice-filler-breakdown th, .practice-filler-breakdown td { padding:14px 20px 14px 0; }
+.practice-page .practice-report-index { gap:32px; margin-bottom:24px; }
+.practice-report-index button { font-size:16px; padding:16px 3px; }
+}

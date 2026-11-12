@@ -130,3 +130,31 @@
 
 .landing-guest-entry { margin-top: 12px; }
 .landing-guest-entry .landing-signin { font-size: 13px; }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.landing-nav { height:80px; padding:0 64px; }
+.landing-content { max-width:2100px; padding:0 64px; }
+.landing-hero { gap:88px; padding:72px 0 64px; }
+.landing-copy { max-width:650px; }
+.landing-copy h1 { font-size:80px; letter-spacing:-3px; }
+.landing-eyebrow { font-size:16px; margin-bottom:28px; }
+.landing-description { max-width:560px; font-size:19px; margin-top:32px; }
+.landing-entry { margin-top:36px; gap:20px; }
+.landing-primary { font-size:16px; min-height:54px; padding:0 26px; }
+.landing-signin { font-size:16px; min-height:44px; padding:0 22px; }
+.landing-nav-actions > a:first-child, .landing-entry > span:not([role="status"]), .landing-support { font-size:15px; }
+.landing-product { padding:32px; }
+.landing-product-heading { font-size:15px; margin-bottom:26px; }
+.landing-product-caption { font-size:13px; margin-top:24px; }
+.landing-tools { padding:36px 0 40px; }
+.landing-tools-heading h2 { font-size:27px; }
+.landing-tools-heading > p { font-size:16px; }
+.landing-tools-grid > button { padding:20px 28px; }
+.landing-tools-grid > button h3 { font-size:18px; }
+.landing-tools-grid > button p { max-width:360px; font-size:16px; }
+.landing-tool-icon { width:40px; height:40px; }
+.landing-footer { font-size:13px; padding:18px 0; }
+.landing-product [aria-label="Illustrative Slide Analyzer preview"] > div > .grid { height:clamp(340px,36vh,520px); }
+}

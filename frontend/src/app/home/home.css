@@ -89,3 +89,33 @@
   .home-table-heading { padding-top:8px; padding-bottom:8px; }
   .home-work-row { min-height:60px; padding-top:9px; padding-bottom:9px; }
 }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.home-nav { height:80px; padding:0 64px; }
+.home-scroll { padding:44px 64px; }
+.home-content { max-width:1900px; }
+.home-intro { margin-bottom:36px; }
+.home-intro h1 { font-size:40px; }
+.home-kicker, .home-workspace-note, .home-tools > div:first-child > span { font-size:14px; }
+.home-intro-description, .home-workspace-note > span:first-child { font-size:16px; }
+.home-tool-grid { gap:22px; }
+.home-tool { padding:28px; }
+.home-tool-icon { width:44px; height:44px; }
+.home-tool-icon svg { width:25px; height:25px; }
+.home-tool-title { font-size:19px; margin-top:20px; }
+.home-tool-description { max-width:340px; font-size:16px; }
+.home-tool-action { font-size:14px; margin-top:24px; padding-top:18px; }
+.home-tools h2, .home-library-toolbar h2 { font-size:17px; }
+.home-library { margin-top:36px; }
+.home-library-toolbar { padding:24px 28px; }
+.home-library-toolbar p, .home-table-heading, .home-work-row > span { font-size:14px; }
+.home-search { width:320px; }
+.home-search input { font-size:15px; padding:12px 0; }
+.home-table-heading, .home-work-row { grid-template-columns:minmax(0,1fr) 170px 180px 210px; padding-left:28px; padding-right:28px; gap:28px; }
+.home-work-row { min-height:92px; padding-top:18px; padding-bottom:18px; }
+.home-work-row > div:first-child p:first-child { font-size:16px; }
+.home-work-row > div:first-child p:last-child, .home-work-row > div:nth-child(2) > span { font-size:13px; }
+.home-open-button { font-size:14px; min-height:38px; padding:8px 16px; }
+}

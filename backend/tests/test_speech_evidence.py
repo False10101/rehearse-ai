@@ -260,3 +260,31 @@ def test_slow_coaching_gets_event_words_and_active_pace(monkeypatch):
     monkeypatch.setattr(speech_evidence, '_request_json', request)
     speech_evidence.coach_speech_moments(moments)
     assert moments[0]['coaching_status'] == 'ready'
+
+
+def test_all_detected_passages_get_feedback_candidates_without_summary_cap():
+    words = [{"word": f"word{i}", "start": i, "end": i + .5} for i in range(100)]
+    speech = {
+        "timed_transcript": words,
+        "filler_events": [{"term": term, "timestamp_seconds": at} for term, at in
+                          [("uh", 4), ("um", 26), ("um", 29), ("uh", 31),
+                           ("uh", 35), ("um", 37), ("you know", 38), ("uh", 40),
+                           ("you know", 42), ("um", 63)]],
+        "pause_events": [{"start_seconds": 48, "end_seconds": 53},
+                         {"start_seconds": 75, "end_seconds": 77.5}],
+        "repetition_events": [{"timestamp_seconds": 43, "phrase": "we need to"},
+                              {"timestamp_seconds": 80, "phrase": "we can"}],
+        "sensitive_term_flags": [{"timestamp_seconds": 85, "term": "test"}],
+        "pace_events": [{"type": "fast", "start_seconds": 10, "end_seconds": 20},
+                        {"type": "slow", "start_seconds": 55, "end_seconds": 60}],
+    }
+    moments = speech_evidence.speech_moments(speech, [], 100)
+    fillers = [m for m in moments if m["kind"] == "verbal-habit"]
+    assert len(fillers) == 4
+    assert sum(len(m["filler_occurrences"]) for m in fillers) == 10
+    assert [m["event_start_seconds"] for m in fillers] == [4, 26, 40, 63]
+    assert len([m for m in moments if m["kind"] == "long-pause"]) == 2
+    assert len([m for m in moments if m["kind"] == "repeated-starts"]) == 2
+    assert len(moments) == 11
+    assert len({m["id"] for m in moments}) == len(moments)
+    assert all(0 <= m["start_seconds"] < m["end_seconds"] <= 100 for m in moments)

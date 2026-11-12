@@ -75,3 +75,36 @@
   .live-workspace .live-status { padding:14px; }
   .live-moments > header { padding:14px 16px; }
 }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+
+.live-workspace .live-header { height:80px; min-height:80px; padding:0 48px; }
+.live-header h1 { font-size:23px; }
+.live-header > div > p, .live-header > div:last-child > span { font-size:13px; }
+.live-workspace .live-layout { max-width:min(2100px,calc((100dvh - 250px) * 2.735)); padding:32px 48px; gap:28px; }
+.live-camera-frame > div > div > h2 { font-size:26px; }
+.live-camera-frame > div > div > p { font-size:16px; }
+.live-controls > p { font-size:15px; }
+.live-controls button { height:44px; font-size:14px; padding:0 16px; }
+.live-controls button svg { width:16px; height:16px; }
+.live-setup { padding:28px; }
+.live-setup h2 { font-size:25px; }
+.live-setup > p:nth-of-type(2), .live-guide > p { font-size:15px; }
+.live-setup li, .live-guide dt, .live-guide dd { font-size:14px; }
+.live-workspace .live-guide { padding:28px; }
+.live-guide dl > div { padding:18px 0; grid-template-columns:92px minmax(0,1fr); }
+.live-workspace .live-status { padding:24px; }
+.live-status h2 { font-size:17px; }
+.live-status dt { font-size:13px; }
+.live-status dd { font-size:15px; }
+.live-status dl > div { padding:12px 14px; }
+.live-moments > header { padding:22px; }
+.live-moments h2 { font-size:20px; line-height:28px; }
+.live-moments .live-event { padding:15px 18px; margin:12px 0; }
+.live-event > p:first-of-type { font-size:16px; }
+.live-event > p:last-child, .live-event time { font-size:13px; }
+.live-moments > div h3 { font-size:16px; }
+.live-moments > div p { font-size:14px; }
+.live-moments > footer, .live-workspace .live-privacy { font-size:13px; }
+}

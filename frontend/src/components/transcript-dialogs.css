@@ -147,3 +147,15 @@
 .generation-review-footer button:last-child { color:white; border-color:#6350df; background:#6350df; }
 .generation-review-dialog button:disabled { opacity:.45; cursor:not-allowed; }
 .generation-review-dialog :focus-visible { outline:2px solid #8e7cf4; outline-offset:2px; }
+
+/* Large desktop displays only; laptop sizing remains unchanged. */
+@media (min-width:2000px) and (min-height:1000px) {
+.transcript-dialog-overlay .transcript-versions-dialog { max-width:1400px; height:min(840px,calc(100dvh - 80px)); }
+.transcript-dialog-overlay .transcript-review-dialog { max-width:1320px; height:min(800px,calc(100dvh - 80px)); }
+.transcript-dialog > header, .transcript-dialog > footer { padding:24px 30px; }
+.transcript-dialog > header h2 { font-size:23px; }
+.transcript-dialog > header p, .transcript-dialog > footer p { font-size:14px; }
+.transcript-dialog > footer button { min-height:44px; font-size:15px; padding:10px 20px; }
+.transcript-dialog [role=region] { padding:30px; }
+.transcript-dialog [role=region] p { font-size:17px; }
+}

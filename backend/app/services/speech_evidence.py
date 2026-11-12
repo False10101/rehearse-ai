@@ -22,11 +22,40 @@ def speech_moments(speech: dict, findings: list[dict], duration: float) -> list[
     words = speech.get("timed_transcript", [])
     if not words:
         return []
+    # Build replayable feedback from the detections, not the top-three summary.
+    # Nearby fillers share one passage; distant occurrences remain separate.
+    raw_kinds = {"verbal-habit": "filler_events", "long-pause": "pause_events",
+                 "repeated-starts": "repetition_events", "sensitive-term": "sensitive_term_flags"}
     candidates = [
         {"kind": f["id"], "start": f["start_seconds"], "end": f["end_seconds"]}
         for f in findings
         if f["category"] != "Body language" and f["id"] != "pace-control"
+        and f["id"] not in raw_kinds
     ]
+    # Support older callers that supply findings without raw detections.
+    candidates.extend(
+        {"kind": f["id"], "start": f["start_seconds"], "end": f["end_seconds"]}
+        for f in findings if f["id"] in raw_kinds and raw_kinds[f["id"]] not in speech
+    )
+    filler_groups = []
+    for event in sorted(speech.get("filler_events", []), key=lambda e: e["timestamp_seconds"]):
+        at = float(event["timestamp_seconds"])
+        if (filler_groups and at - filler_groups[-1][-1]["timestamp_seconds"] <= 4
+                and at - filler_groups[-1][0]["timestamp_seconds"] <= 12):
+            filler_groups[-1].append(event)
+        else:
+            filler_groups.append([event])
+    for group in filler_groups:
+        candidates.append({"kind": "verbal-habit", "start": group[0]["timestamp_seconds"],
+                           "end": min(duration, group[-1]["timestamp_seconds"] + 1),
+                           "filler_occurrences": group})
+    candidates.extend(
+        {"kind": "long-pause", "start": e["start_seconds"], "end": e["end_seconds"]}
+        for e in speech.get("pause_events", [])
+    )
+    for kind, field in (("repeated-starts", "repetition_events"), ("sensitive-term", "sensitive_term_flags")):
+        candidates.extend({"kind": kind, "start": e["timestamp_seconds"],
+                           "end": min(duration, e["timestamp_seconds"] + 2)} for e in speech.get(field, []))
     candidates.extend(
         {"kind": event["type"], "start": event["start_seconds"], "end": event["end_seconds"]}
         for event in speech.get("pace_events", [])
@@ -49,6 +78,7 @@ def speech_moments(speech: dict, findings: list[dict], duration: float) -> list[
             {
                 "id": len(result) + 1,
                 "kind": candidate["kind"],
+                "filler_occurrences": candidate.get("filler_occurrences", []),
                 "event_start_seconds": candidate["start"],
                 "event_end_seconds": candidate["end"],
                 "start_seconds": round(start, 2),
@@ -112,6 +142,8 @@ transitions, and audience reactions may be appropriate. If uncertain, identify
 an exact phrase to replay and an optional adjustment to try.
 Suggested delivery is a short example, preserving meaning, names, and numbers;
 [pause] is a rehearsal cue. Do not invent facts or guess corrections to names.
+In cleaned-up spoken examples, omit dispensable fillers and duplicate starts in
+the excerpt even when the main detected issue is different.
 Do not claim to have heard audio. Keep each field to 1-2 sentences; example <=60 words.
 Use the supplied position, nearby context, and pace measurements, not the fast/slow
 label alone. A reflective conclusion, thank-you, transition, audience interaction,
@@ -120,7 +152,11 @@ up merely to meet a WPM threshold. When delivery appears appropriate, say so and
 recommend preserving it; suggested_delivery can retain the original wording.
 For faster speech, inspect idea density, technical terms, list items, contrasts,
 and sentence boundaries before recommending a pause or split. For verbal habits,
-distinguish meaningful qualifiers from dispensable repetition. For pauses, identify
+distinguish meaningful qualifiers from dispensable repetition. For a filler passage,
+address ALL supplied filler_occurrences in that passage, including different terms.
+Explain where they interrupt the thought and give a cleaned-up spoken alternative
+for that passage. Never substitute generic advice about the whole recording.
+For pauses, identify
 the transition on both sides rather than assuming hesitation. Estimated timestamps
 cannot establish exact silence lengths. Only pause_measurements marked audio
 have measured quiet audio; do not infer hesitation or intention from them.
@@ -146,6 +182,7 @@ DATA:\n""" + json.dumps(
                         for k in (
                             "id",
                             "kind",
+                            "filler_occurrences",
                             "event_start_seconds",
                             "event_end_seconds",
                             "event_transcript",
