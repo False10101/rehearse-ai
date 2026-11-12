@@ -151,3 +151,14 @@
 .practice-page .practice-report-index { gap:32px; margin-bottom:24px; }
 .practice-report-index button { font-size:16px; padding:16px 3px; }
 }
+
+.practice-guest-notice { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:18px 22px; margin-bottom:24px; border:1px solid var(--practice-line); border-radius:8px; background:#fff; }
+.practice-guest-notice h2 { margin:0; font-size:14px; font-weight:600; color:var(--practice-text); }
+.practice-guest-notice p { margin:6px 0 0; font-size:12px; line-height:1.65; color:var(--practice-secondary); }
+.practice-guest-notice button { flex-shrink:0; }
+.practice-guest-notice [role=alert] { color:#b43a50; }
+@media (min-width:2000px) and (min-height:1000px) {
+  .practice-guest-notice { padding:24px 30px; gap:32px; margin-bottom:30px; }
+  .practice-guest-notice h2 { font-size:18px; }
+  .practice-guest-notice p { font-size:15px; }
+}

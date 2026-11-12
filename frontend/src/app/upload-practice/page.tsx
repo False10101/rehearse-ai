@@ -122,6 +122,24 @@ function UploadIcon() {
   return <svg aria-hidden="true" fill="none" height="26" viewBox="0 0 24 24" width="26"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" /></svg>;
 }
 
+function GuestRecordingNotice() {
+  const { login } = useAuth();
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+  async function signIn() {
+    setConnecting(true); setError("");
+    try { await login(); }
+    catch { setError("Sign-in couldn’t start. Please try again."); setConnecting(false); }
+  }
+  return <aside className="practice-guest-notice" aria-label="Recording uploads require sign-in">
+    <div><h2>Want to upload your own recording?</h2>
+      <p>Sign in with Google to upload and analyze your rehearsal. Guests can explore the sample report.</p>
+      {error && <p role="alert">{error}</p>}
+    </div>
+    <button type="button" className="practice-button primary" disabled={connecting} onClick={() => void signIn()}>{connecting ? "Connecting to Google…" : "Sign in to upload"}</button>
+  </aside>;
+}
+
 export default function UploadPracticePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -178,6 +196,7 @@ export default function UploadPracticePage() {
   };
 
   const upload = async (file: File) => {
+    if (isGuest) { setError("Sign in with Google to upload your own recording."); return; }
     if (!file.name.toLowerCase().endsWith(".mp4")) { setError("Choose an MP4 rehearsal video."); return; }
     if (file.size > 500 * 1024 * 1024) { setError("The rehearsal video must be 500 MB or smaller."); return; }
     setUploading(true);
@@ -238,8 +257,9 @@ export default function UploadPracticePage() {
       <Link className="practice-button" href="/home">Back to workspace</Link>
     </nav>
     <div className="practice-scroll"><div className="practice-content">
+      {isGuest && <GuestRecordingNotice />}
       {error && <div className="practice-error" role="alert">{error}</div>}
-      {!requestedSession && isGuest ? <section className="practice-panel practice-loading"><p className="practice-eyebrow">Sample recording</p><h2>Explore Upload Practice</h2><p className="practice-muted">The sample recording report is being prepared. You can try Live Practice or upload slides while you wait.</p><Link className="practice-button" href="/home">Back to workspace</Link></section> : !requestedSession ? <>
+      {!requestedSession && isGuest ? <section className="practice-panel practice-loading"><p className="practice-eyebrow">Sample recording</p><h2>Explore Upload Practice</h2><p className="practice-muted">No sample report is available yet. You can still try Live Practice or upload slides as a guest.</p><Link className="practice-button" href="/home">Back to workspace</Link></section> : !requestedSession ? <>
         <header className="practice-heading"><div><h1>Learn from your last rehearsal.</h1><p className="practice-muted">Review your delivery and choose what to practise next.</p></div></header>
         <section className="practice-upload-layout">
           <div className="practice-upload" aria-busy={uploading}><span className="practice-upload-icon"><UploadIcon /></span><h3>Start with a rehearsal video</h3><p>For body-language feedback, keep your face, arms, and torso visible.<br />Use clear audio for speech analysis.</p>
