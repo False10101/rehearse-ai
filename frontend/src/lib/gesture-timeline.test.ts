@@ -1,6 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gestureMarkers, gestureNeedsAdjustment, gestureTicks } from "./gesture-timeline.ts";
+import { gestureBodyGroups, gestureMarkers, gestureNeedsAdjustment, gestureTicks } from "./gesture-timeline.ts";
+
+test("body-area grouping stays ordered and preserves different simultaneous arm behaviors", () => {
+  const events = ["repeated_swaying", "hands_clasped_low", "repeated_head_movement", "arms_crossed", "hand_near_face", "gesture_box_excursion"]
+    .map(type => ({ type, start_seconds: 5, duration_seconds: 2 }));
+  const groups = gestureBodyGroups(events);
+  assert.deepEqual(groups.map(group => group.label), ["Arms & hands", "Head", "Torso"]);
+  assert.equal(groups[0].items.length, 4);
+  assert.equal(gestureMarkers(groups[0].items, 60, 600).markers.length, 4);
+  assert.equal(gestureMarkers(groups[0].items, 60, 600).lanes, 4);
+  assert.equal(groups.flatMap(group => group.items).length, events.length);
+  assert.equal(events[0].type, "repeated_swaying");
+});
+
+test("missing body areas retain their rows and unknown detections are not lost", () => {
+  const groups = gestureBodyGroups([{ type: "new_behavior", start_seconds: 2, duration_seconds: 1 }]);
+  assert.deepEqual(groups.map(group => group.id), ["arms", "head", "torso", "other"]);
+  assert.ok(groups.slice(0, 3).every(group => group.items.length === 0));
+  assert.equal(groups[3].items[0].type, "new_behavior");
+});
 
 test("issue timeline follows code decisions, never an AI verdict or wording availability", () => {
   const events = [

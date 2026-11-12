@@ -1,5 +1,22 @@
 type Moment = { start_seconds: number; end_seconds?: number; duration_seconds: number };
 
+const bodyAreas = [
+  { id: "arms", label: "Arms & hands", types: ["arms_crossed", "gesture_box_excursion", "hand_near_face", "hands_clasped_low"] },
+  { id: "head", label: "Head", types: ["repeated_head_movement"] },
+  { id: "torso", label: "Torso", types: ["repeated_swaying"] },
+];
+
+/** Stable body-area rows, independent of which behavior occurs first. */
+export function gestureBodyGroups<T extends Moment & { type: string }>(events: T[]) {
+  const groups = bodyAreas.map(area => ({
+    id: area.id, label: area.label,
+    items: events.filter(event => area.types.includes(event.type)),
+  }));
+  const other = events.filter(event => !bodyAreas.some(area => area.types.includes(event.type)));
+  if (other.length) groups.push({ id: "other", label: "Other movements", items: other });
+  return groups;
+}
+
 /** Code decisions, not generated wording, determine which issues are displayed. */
 export function gestureNeedsAdjustment(event: { detection?: { is_issue?: boolean } | null }) {
   return event.detection?.is_issue === true;

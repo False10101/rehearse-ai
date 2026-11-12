@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { gestureMarkers, gestureNeedsAdjustment, gestureTicks } from "@/lib/gesture-timeline";
+import { gestureBodyGroups, gestureMarkers, gestureNeedsAdjustment, gestureTicks } from "@/lib/gesture-timeline";
 
 type GestureCoaching = { assessment: "adjustment"; title: string; observation: string; impact: string; recommendation: string; evidence_seconds: number[] };
 type Event = { type: string; label: string; start_seconds: number; end_seconds?: number; duration_seconds: number; feedback: string; evidence_image_url: string | null; evidence_video_url?: string | null; coaching?: GestureCoaching | null; detection?: { is_issue?: boolean } | null };
@@ -51,11 +51,13 @@ function GestureIcon({ type }: { type: string }) {
 }
 
 const gestureLabel = (event: Event) => event.label;
-const gestureGroupLabels: Record<string, string> = {
-  arms_crossed: "Arms across torso", gesture_box_excursion: "Wide sideways reach",
-  hand_near_face: "Hands near face", hands_clasped_low: "Hands held together",
-  repeated_swaying: "Body leaning & shifting", repeated_head_movement: "Head movement",
-};
+function BodyAreaIcon({ area }: { area: string }) {
+  return <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {area === "head" ? <><path d="M8 21v-4c-3-1-4-4-4-7a7 7 0 0 1 14-1l2 4h-3v4h-4v4" /><path d="M8 6a4 4 0 0 1 4-2" /></>
+      : area === "arms" ? <><circle cx="12" cy="4" r="2" /><path d="M8 21V10m8 11V10M3 16l2-6a4 4 0 0 1 4-3h6a4 4 0 0 1 4 3l2 6M8 16h8" /></>
+      : <><circle cx="12" cy="4" r="2" /><path d="m7 8-2 4 3 3-1 6h10l-1-6 3-3-2-4M8 8h8M9 15h6" /></>}
+  </svg>;
+}
 const momentKey = (event: Event) => `${event.type}:${event.start_seconds}:${event.duration_seconds}`;
 
 
@@ -116,11 +118,10 @@ export function PracticeGestures({ events, token, tracking, duration = 0 }: { ev
   }, [selectionNotice]);
   const ordered = events.filter(gestureNeedsAdjustment).sort((a, b) => a.start_seconds - b.start_seconds);
   const active = ordered.find(event => momentKey(event) === selected) ?? ordered[0];
-  const groups = new Map<string, Event[]>();
-  for (const event of ordered) groups.set(event.type, [...(groups.get(event.type) ?? []), event]);
+  const groups = gestureBodyGroups(ordered);
   const end = Math.max(1, duration, ...events.map(event => event.end_seconds ?? event.start_seconds + event.duration_seconds));
   // Keep short and nearby detections individually clickable instead of drawing
-  // markers on top of one another. Different behaviors retain separate rows.
+  // markers on top of one another, including different behaviors in one body area.
   const timelineWidth = Math.max(560, end * 3);
   const axisPlot = useRef<HTMLDivElement | null>(null);
   const [plotWidth, setPlotWidth] = useState(timelineWidth);
@@ -149,18 +150,19 @@ export function PracticeGestures({ events, token, tracking, duration = 0 }: { ev
       <div className="practice-gesture-timeline-scroll" role="region" aria-label="Gesture timeline, scroll horizontally for later moments" tabIndex={0}>
         <div className="practice-gesture-timeline" style={{ minWidth: timelineWidth + 228 }}>
           <div className="practice-gesture-axis"><span>Recording time</span><div ref={axisPlot}>{ticks.map(tick => <span key={tick.seconds} style={{ left: `${tick.leftPercent}%` }}>{time(tick.seconds)}</span>)}</div></div>
-          {Array.from(groups, ([type, items]) => {
+          {groups.map(({ id, label, items }) => {
             // Percentages place bars on the same scale as the axis at every
             // viewport width. Measured pixels are used only for click/label lanes.
             const { markers, lanes } = gestureMarkers(items, end, plotWidth);
-            return <div className="practice-gesture-track" data-gesture={type} key={type}>
-              <div className="practice-gesture-track-label"><GestureIcon type={type} /><span>{gestureGroupLabels[type] ?? items[0].label}</span></div>
-              <div className="practice-gesture-track-moments" style={{ height: lanes * 64 }}>
+            return <div className="practice-gesture-track" data-body-area={id} key={id}>
+              <div className="practice-gesture-track-label"><BodyAreaIcon area={id} /><span>{label}<small>{items.length} {items.length === 1 ? "moment" : "moments"}</small></span></div>
+              <div className="practice-gesture-track-moments" style={{ height: Math.max(1, lanes) * 64 }}>
                 {ticks.map(tick => <i aria-hidden="true" className="practice-gesture-grid-line" key={tick.seconds} style={{ left: `${tick.leftPercent}%` }} />)}
-                {markers.map(({ item, leftPercent, widthPercent, hitWidth, lane }, index) => <div key={`${item.start_seconds}-${index}`} className={`practice-gesture-marker${item === active ? " is-selected" : ""}`} style={{ left: `${leftPercent}%`, width: `${widthPercent}%`, top: lane * 64 }}>
+                {!items.length && <span className="practice-gesture-track-empty">No flagged moments</span>}
+                {markers.map(({ item, leftPercent, widthPercent, hitWidth, lane }) => <div key={momentKey(item)} data-gesture={item.type} className={`practice-gesture-marker${item === active ? " is-selected" : ""}`} style={{ left: `${leftPercent}%`, width: `${widthPercent}%`, top: lane * 64 }}>
                   <span className="practice-gesture-duration" aria-hidden="true" />
-                  <button type="button" style={{ width: hitWidth }} onClick={() => { setSelected(momentKey(item)); setSelectionNotice({ key: momentKey(item) }); }} aria-pressed={item === active} aria-label={`${gestureLabel(item)}, ${time(item.start_seconds)} to ${time(item.end_seconds ?? item.start_seconds + item.duration_seconds)}. Review evidence.`}>
-                    <time>{time(item.start_seconds)}</time><span><GestureIcon type={type} /></span>
+                  <button type="button" style={{ width: hitWidth }} onClick={() => { setSelected(momentKey(item)); setSelectionNotice({ key: momentKey(item) }); }} aria-pressed={item === active} title={gestureLabel(item)} aria-label={`${gestureLabel(item)}, ${time(item.start_seconds)} to ${time(item.end_seconds ?? item.start_seconds + item.duration_seconds)}. Review evidence.`}>
+                    <time>{time(item.start_seconds)}</time><span><GestureIcon type={item.type} /></span>
                   </button>
                   {selectionNotice?.key === momentKey(item) && <span role="status" className="practice-gesture-selection-notice" style={leftPercent > 75 ? { right: 8 } : { left: 44 }}>Replay updated below <span aria-hidden="true">↓</span></span>}
                 </div>)}

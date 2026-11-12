@@ -46,6 +46,13 @@
 .practice-gesture-track { border-top:1px solid #eeebf3; }
 .practice-gesture-track-label { position:sticky; left:0; z-index:2; display:flex; align-items:center; gap:10px; background:#faf9fc; border-right:1px solid #e8e3f1; padding:8px 12px; color:#65547e; font-size:12px; line-height:1.5; }
 .practice-gesture-track-label svg { flex-shrink:0; }
+.practice-gesture-track[data-body-area] { --gesture-color:#65547e; --gesture-soft:#f1edf6; }
+.practice-gesture-track[data-body-area="arms"] { --gesture-color:#3e6aab; --gesture-soft:#edf4ff; }
+.practice-gesture-track[data-body-area="head"] { --gesture-color:#7051a3; --gesture-soft:#f3edff; }
+.practice-gesture-track[data-body-area="torso"] { --gesture-color:#337f70; --gesture-soft:#eaf8f3; }
+.practice-gesture-track-label > span { display:flex; flex-direction:column; gap:2px; font-weight:600; }
+.practice-gesture-track-label small { color:#837b8c; font-size:10px; font-weight:400; }
+.practice-gesture-track-empty { position:absolute; inset:0; display:flex; align-items:center; padding-left:16px; color:#837b8c; font-size:11px; pointer-events:none; }
 .practice-gesture-track-moments { position:relative; margin-right:48px; min-height:64px; }
 .practice-gesture-grid-line { position:absolute; top:0; bottom:0; width:1px; background:#f0edf5; pointer-events:none; }
 .practice-gesture-marker { position:absolute; height:64px; color:#75688a; }
