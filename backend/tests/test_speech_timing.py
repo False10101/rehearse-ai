@@ -39,12 +39,23 @@ def sample(start, pace, count, kind="slow"):
             "words_per_minute": pace, "word_count": count, "type": kind}
 
 
-def test_pause_explains_low_overall_pace_without_changing_measured_graph_value():
+def test_long_pause_does_not_cancel_slow_pace():
     samples = [sample(0, 80, 20)]
     contextualize_pace(samples, [{"end": 60}], [{"start": 3, "end": 9}])
     assert samples[0]["words_per_minute"] == 80
-    assert samples[0]["type"] == "steady"
+    assert samples[0]["type"] == "slow"
     assert samples[0]["active_words_per_minute"] > 100
+
+
+@pytest.mark.parametrize("pace,count", [(114, 28), (116, 29), (120, 30)])
+def test_slow_passage_remains_reviewable_despite_long_pause(pace, count):
+    from app.services.upload_practice import _pace_events
+
+    samples = [sample(40, pace, count)]
+    samples[0]["timestamp_seconds"] = 47.5
+    contextualize_pace(samples, [{"end": 75}], [{"start": 47, "end": 53}])
+    assert samples[0]["type"] == "slow"
+    assert _pace_events(samples)[0]["type"] == "slow"
 
 
 def test_moderate_closing_slowdown_is_not_a_speed_up_instruction():

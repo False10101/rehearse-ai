@@ -66,29 +66,12 @@ def contextualize_pace(samples: list[dict], words: list[dict], silences: list[di
         sample["quiet_seconds"] = round(quiet, 2)
         closing = end >= last_word - 5
         if sample["type"] == "slow":
-            # Silence is reviewed separately. A modest closing slowdown is not
-            # promoted to an issue; unusually low active delivery remains visible.
-            # Ordinary gaps between phrases are part of delivery pace. Only
-            # separately reviewable long pauses can explain away a slow window.
-            long_pause_seconds = sum(
-                overlap for s in silences or []
-                if (overlap := max(0, min(end, s["end"]) - max(start, s["start"]))) >= 2
-            )
-            pace_without_long_pauses = sample["word_count"] * 60 / max(
-                1, end - start - long_pause_seconds
-            )
-            pause_explains = long_pause_seconds > 0 and pace_without_long_pauses > SLOW_PACE_WPM
+            # Pause measurements provide context; they never cancel slow pace.
             ordinary_closing = closing and sample["words_per_minute"] >= baseline * 0.65
-            if pause_explains or ordinary_closing:
+            if ordinary_closing:
                 sample["type"] = "steady"
-                sample["context"] = (
-                    "Pause within the passage" if pause_explains else "Closing slowdown"
-                )
+                sample["context"] = "Closing slowdown"
             else:
-                sample["context"] = (
-                    "Low speaking rate after accounting for measured pauses"
-                    if silences is not None
-                    else "Slower passage; audio pause measurement unavailable"
-                )
+                sample["context"] = "Slower delivery"
         elif sample["type"] == "fast":
             sample["context"] = "Faster delivery; review idea density and phrase boundaries"
