@@ -375,7 +375,9 @@ function ReportView({ readOnly, report, accessToken, deleteReport, retrySpeech, 
         <FillerBreakdown events={report.filler_events ?? []} />
         {clarityMoments.length ? <div className="practice-clarity-findings">{clarityMoments.map(moment =>
           <article key={moment.id} className="practice-clarity-finding">
-            <header><h3>{clarityTitles[moment.kind] ?? "Speech passage to review"}</h3><time>{formatTime(moment.event_start_seconds)}–{formatTime(moment.event_end_seconds)}</time></header>
+            <header><h3>{moment.kind === "long-pause"
+              ? `${(report.pause_events?.find(pause => Math.abs(pause.start_seconds - moment.event_start_seconds) < 0.1 && Math.abs(pause.end_seconds - moment.event_end_seconds) < 0.1)?.duration_seconds ?? Math.max(0, moment.event_end_seconds - moment.event_start_seconds)).toFixed(1)}-second pause`
+              : clarityTitles[moment.kind] ?? "Speech passage to review"}</h3><time>{formatTime(moment.event_start_seconds)}–{formatTime(moment.event_end_seconds)}</time></header>
             <PracticeSpeechMoment moment={moment} accessToken={accessToken} presentation="review" />
           </article>
         )}</div> : speechFindings.length ? <div className="practice-clarity-findings">{speechFindings.map(f =>
