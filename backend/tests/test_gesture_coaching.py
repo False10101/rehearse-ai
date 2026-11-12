@@ -125,7 +125,7 @@ def test_unknown_pattern_is_not_invented_as_a_detection():
 
 
 @pytest.mark.parametrize("kind,axis,label,correction", [
-    ("repeated_swaying", "torso lean", "Repeated torso leaning", "shoulders back over your hips"),
+    ("repeated_swaying", "torso lean", "Repeated upper-body leaning", "shoulders above your hips"),
     ("repeated_swaying", "whole-body lateral shifting", "Repeated sideways body shifting", "one position"),
     ("repeated_head_movement", "side to side", "Repeated head turns", "one direction"),
     ("repeated_head_movement", "up and down", "Repeated nodding", "after a nod"),
@@ -143,8 +143,8 @@ def test_folded_and_single_arm_reach_feedback_remain_distinct():
     folded = event(measurements=[{"body_part": "both forearms", "posture": "folded across your torso"}])
     reach = event(measurements=[{"body_part": "your right arm", "posture": "toward the opposite shoulder"}])
     first, second = [prepare_gesture_events([e])[0] for e in (folded, reach)]
-    assert first["label"] == "Both arms folded across torso"
-    assert "Unfold both arms" in first["coaching"]["title"]
+    assert first["label"] == "Both arms crossed over chest"
+    assert "Arms kept crossed" in first["coaching"]["title"]
     assert "Right arm" in second["label"]
     assert "your right arm" in second["coaching"]["recommendation"]
 
@@ -163,13 +163,14 @@ def test_missing_measurements_do_not_invent_variant_and_mixed_keeps_both():
 def test_old_generic_rewrite_cannot_replace_new_specific_wording():
     from app.services.gesture_rules import WORDING_VERSION
     candidate = event("repeated_swaying", measurements=[{"axis": "torso lean"}], coaching={
-        "version": RULE_VERSION, "source": "rewrite", "title": "Old generic title",
+        "version": RULE_VERSION, "wording_version": "gesture-wording-v4",
+        "source": "rewrite", "title": "Old generic title",
         "recommendation": "Old correction", "impact": "Old impact",
     })
     result = prepare_gesture_events([candidate])[0]
     assert result["coaching"]["source"] == "code"
     assert result["coaching"]["wording_version"] == WORDING_VERSION
-    assert "torso leaning" in result["coaching"]["title"]
+    assert "upper-body leaning" in result["coaching"]["title"]
     assert candidate["coaching"]["title"] == "Old generic title"
 
 

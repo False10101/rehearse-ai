@@ -57,8 +57,8 @@ export function PracticeSpeechMoment({ moment, accessToken, presentation = "comp
     </div>
     <div className="practice-clarity-advice">
       {moment.coaching_status === "ready" ? <>
-        {moment.observation && <><h4>What to work on</h4><p>{moment.observation}</p></>}
-        {moment.recommendation && <div className="practice-clarity-recommendation"><h4>Try this next</h4><p>{moment.recommendation}</p></div>}
+        {moment.observation && <><h4>What happened</h4><p>{moment.observation}</p></>}
+        {moment.recommendation && <div className="practice-clarity-recommendation"><h4>What to try</h4><p>{moment.recommendation}</p></div>}
         {moment.suggested_delivery && <><h4>Try saying it this way</h4><blockquote className="practice-clarity-example">{moment.suggested_delivery}</blockquote></>}
       </> : <p className="practice-note">Feedback for this excerpt couldn’t be generated. Choose “Retry speech feedback” above to try again.</p>}
     </div>
@@ -72,7 +72,7 @@ export function PracticeSpeechMoment({ moment, accessToken, presentation = "comp
     {source ? <audio key={source} controls preload="metadata" src={source} aria-label={"Listen to speech at " + time(moment.start_seconds)} />
       : <p className="practice-note">{error ? "Audio could not be loaded. Refresh to retry." : moment.audio_url ? "Loading audio excerpt…" : "Audio is unavailable for this excerpt."}</p>}
     {moment.coaching_status === "ready" ? <>
-      <p className="practice-eyebrow">Delivery feedback</p>
+      <p className="practice-eyebrow">Speaking advice</p>
       <p>{moment.observation}</p>
       <p className="practice-recommendation">{moment.recommendation}</p>
       <details className="practice-delivery-example"><summary>Try saying it this way</summary>

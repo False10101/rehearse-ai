@@ -7,7 +7,7 @@ are configurable engineering heuristics, not universal rules about body language
 from collections import Counter
 
 RULE_VERSION = "gesture-rules-v3"
-WORDING_VERSION = "gesture-wording-v4"
+WORDING_VERSION = "gesture-wording-v5"
 
 
 def pattern_key(event: dict) -> tuple:
@@ -68,7 +68,7 @@ def gesture_label(event: dict) -> str:
     axes = {sample.get("axis") for sample in samples if sample.get("axis")}
     if kind == "repeated_swaying":
         if axes == {"torso lean"}:
-            return "Repeated torso leaning"
+            return "Repeated upper-body leaning"
         if axes == {"whole-body lateral shifting"}:
             return "Repeated sideways body shifting"
         if axes == {"torso lean", "whole-body lateral shifting"}:
@@ -81,17 +81,17 @@ def gesture_label(event: dict) -> str:
                     frozenset(axes), "Repeated head movements")
     if kind == "arms_crossed":
         if posture == "folded across your torso":
-            return "Both arms folded across torso"
+            return "Both arms crossed over chest"
         if posture == "toward the opposite shoulder":
             return f"{body.removeprefix('your ').capitalize()} across to opposite shoulder" if body else "Arm across to opposite shoulder"
-        return "Arm crossing across torso"
+        return "Arm held across chest"
     if kind == "gesture_box_excursion":
         if len({s.get("body_part") for s in samples if s.get("body_part")}) > 1:
             return "Wide sideways arm reaches"
         return f"{body.removeprefix('your ').capitalize()} extended sideways" if body else "Wide sideways reach"
     if kind == "hand_near_face":
         return f"{body.removeprefix('your ').capitalize()} near face" if body else "Hand near face"
-    return "Hands held together low on torso"
+    return "Hands held together in front of body"
 
 
 def measured_coaching(event: dict) -> dict:
@@ -121,70 +121,68 @@ def measured_coaching(event: dict) -> dict:
         axis = max(turns_by_axis, key=lambda key: len(turns_by_axis[key])) or axis
     text = {
         "arms_crossed": (
-            "Release the crossed arm between points",
+            "Arm held across chest",
             f"You kept {body} {posture} for about {duration_text} in this passage.",
-            "Holding this position leaves less room for your hands to support your explanation.",
-            "Release the arm after this point and let your hands return to a comfortable rest.",
+            "Keeping an arm across your chest limits the hand movements you can use while speaking.",
+            "Move your arm away from your chest and let it rest comfortably by your side.",
         ),
         "gesture_box_excursion": (
-            "Bring the extended arm back after the emphasis",
+            "Arm held far out to the side",
             f"You held {body} far out to the side for about {duration_text}.",
-            "A reach held after the emphasis can draw attention away from the next point.",
-            "Complete the reach with the word it emphasizes, then bring the arm back.",
+            "Keeping an arm stretched far to the side can distract viewers from what you are saying.",
+            "Bring your arm closer to your body instead of keeping it stretched out.",
         ),
         "hands_clasped_low": (
-            "Release the low hand clasp between ideas",
+            "Hands kept together in front of body",
             f"Your hands stayed close together low on your torso for about {duration_text}.",
-            "A prolonged clasp keeps both hands occupied instead of available for emphasis.",
-            "Release the clasp for the next key idea, then use a comfortable resting position.",
+            "Keeping your hands together for a long time limits the gestures you can use to explain something.",
+            "Separate your hands and let them rest comfortably. Use a hand gesture when it helps explain what you mean.",
         ),
         "hand_near_face": (
-            "Finish the face-level adjustment before continuing",
+            "Hand kept near face",
             f"You kept {body.replace('arm', 'hand')} near your face for about "
             f"{duration_text} during this passage.",
-            "A lingering or repeated face-level hand movement competes with your explanation.",
-            "Finish the adjustment, lower the hand, and continue the next sentence "
-            "with it relaxed.",
+            "A hand moving near your face can distract viewers and make your face harder to see.",
+            "Lower your hand away from your face and let it rest comfortably.",
         ),
         "repeated_head_movement": (
-            "Settle your head between points",
+            "Repeated head movement",
             f"Your head moved {axis} repeatedly"
             + (f", changing direction at least {repeats} times in this passage." if repeats
                else f" for about {duration_text} in this passage."),
-            "Repeated back-and-forth movement can compete with the point you are delivering.",
-            "Finish the sentence with your head settled, then turn deliberately "
-            "for the next point.",
+            "Repeated head movements can distract viewers from what you are saying.",
+            "Face the audience and reduce repeated head movements while speaking.",
         ),
         "repeated_swaying": (
-            "Settle your weight before the next point",
+            "Repeated side-to-side body movement",
             "Your torso shifted from side to side repeatedly"
             + (f", changing direction at least {repeats} times in this passage." if repeats
                else f" for about {duration_text} in this passage."),
-            "Repeated shifts can draw attention away from an otherwise steady explanation.",
-            "Balance your weight comfortably while finishing this idea; move at the transition.",
+            "Repeated side-to-side movement can distract viewers from what you are saying.",
+            "Stand comfortably with your weight balanced on both feet rather than repeatedly shifting from side to side.",
         ),
     }
     title, observation, impact, recommendation = text[kind]
     if kind == "arms_crossed":
         if posture == "folded across your torso":
-            title = "Unfold both arms between points"
-            recommendation = "Unfold your forearms and let both hands rest comfortably before your next point."
+            title = "Arms kept crossed"
+            recommendation = "Uncross your arms and let your hands rest comfortably by your sides."
         elif posture == "toward the opposite shoulder":
-            title = f"Lower {body} from the opposite shoulder"
-            recommendation = f"Bring {body} back from across your chest, then let it rest before the next point."
+            title = f"{body.capitalize()} held across to the opposite shoulder"
+            recommendation = f"Move {body} away from the opposite shoulder and let it rest by your side."
     elif kind == "gesture_box_excursion":
-        title = f"Bring {body} back after the sideways reach"
-        recommendation = f"Finish the sideways emphasis, then lower {body} before starting the next idea."
+        title = f"{body.capitalize()} held far out to the side"
+        recommendation = f"Bring {body} closer to your body and let it rest instead of keeping it stretched out."
     elif kind == "hand_near_face":
         hand = body.replace("arm", "hand")
-        title = f"Lower {hand} away from your face"
-        recommendation = f"Move {hand} away from your face and let it rest while you finish the sentence."
+        title = f"{hand.capitalize()} kept near your face"
+        recommendation = f"Lower {hand} away from your face so viewers can see your face clearly."
     elif kind == "repeated_head_movement":
         axes = {sample.get("axis") for sample in samples if sample.get("axis")}
         variants = {
-            "side to side": ("Pause the repeated head turns", "Keep your head facing one direction while finishing the sentence, then turn for the next point."),
-            "up and down": ("Pause the repeated nodding", "Let your head settle upright after a nod while you finish the sentence."),
-            "in sideways tilts": ("Settle the sideways head tilts", "Bring your head back upright rather than repeatedly tipping it toward either shoulder."),
+            "side to side": ("Repeated head turns", "Face the audience in one direction for a few sentences instead of repeatedly turning your head left and right."),
+            "up and down": ("Repeated nodding", "Bring your head upright after a nod instead of continuing to nod while speaking."),
+            "in sideways tilts": ("Repeated sideways head tilts", "Bring your head back upright rather than repeatedly tipping it toward either shoulder."),
         }
         if len(axes) == 1 and axis in variants:
             title, recommendation = variants[axis]
@@ -194,25 +192,25 @@ def measured_coaching(event: dict) -> dict:
     elif kind == "repeated_swaying":
         axes = {sample.get("axis") for sample in samples if sample.get("axis")}
         if axes == {"torso lean"}:
-            title = "Settle the side-to-side torso leaning"
+            title = "Repeated upper-body leaning"
             observation = "Your upper body repeatedly leaned toward one side and then the other"
-            impact = "Repeated upper-body leaning can pull attention away from your explanation."
-            recommendation = "Bring your shoulders back over your hips and finish the next sentence without alternating your torso lean."
+            impact = "Repeated leaning can distract viewers from what you are saying."
+            recommendation = "Keep your shoulders above your hips rather than repeatedly leaning your upper body left and right."
         elif axes == {"whole-body lateral shifting"}:
-            title = "Settle the sideways body shifting"
+            title = "Repeated sideways body movement"
             observation = "Your shoulders and hips repeatedly shifted sideways together"
-            impact = "Repeated sideways movement of your body can compete with the point you are explaining."
-            recommendation = "Let your body settle in one position while finishing the point; make the next sideways move deliberately at a transition."
+            impact = "Moving your whole body sideways repeatedly can distract viewers from what you are saying."
+            recommendation = "Stand in one position with your weight balanced on both feet instead of repeatedly moving sideways."
         elif axes == {"torso lean", "whole-body lateral shifting"}:
-            title = "Settle the leaning and sideways shifting"
+            title = "Repeated leaning and sideways movement"
             observation = "Your upper body repeatedly leaned side to side, and your shoulders and hips also shifted sideways together"
-            recommendation = "Settle your shoulders over your hips and hold one position through the sentence before moving again."
+            recommendation = "Keep your shoulders above your hips and your weight balanced on both feet instead of repeatedly leaning and moving sideways."
         else:
             observation = "Your body moved from side to side repeatedly"
         observation += (f", changing direction at least {repeats} times in this passage." if repeats
                         else f" during this {duration_text} passage.")
     if episodes >= 2 and kind not in {"repeated_head_movement", "repeated_swaying"}:
-        observation += f" The same pattern occurred {episodes} times nearby."
+        observation += f" This movement was also detected in {episodes - 1} other nearby " + ("section" if episodes == 2 else "sections") + " of the recording."
     return {
         "assessment": "adjustment", "source": "code", "version": RULE_VERSION,
         "wording_version": WORDING_VERSION,

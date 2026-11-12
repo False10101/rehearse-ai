@@ -96,13 +96,13 @@ function GestureReview({ event, token }: { event: Event; token: string | null })
       {loading && <div className="practice-gesture-loading" role="status"><span className="practice-gesture-spinner" aria-hidden="true" /><span className="sr-only">Loading replay…</span></div>}
       {(failed || !path || !token) && <p className="practice-gesture-load-status" role="status">{failed ? "The replay could not be loaded. Refresh to try again." : "The replay for this moment is unavailable."}</p>}
     </div>
-      <p className="practice-gesture-caption">{event.evidence_video_url ? "Silent replay with the surrounding context." : "A captured moment from your recording."}</p>
+      <p className="practice-gesture-caption">{event.evidence_video_url ? "Video without sound, including a few seconds before and after the movement." : "A captured moment from your recording."}</p>
     </div>
     <div className="practice-gesture-coaching" aria-live="polite"><p className="practice-gesture-selected-label" data-gesture={event.type}><GestureIcon type={event.type} />{gestureLabel(event)} <span>{time(event.start_seconds)}–{time(event.end_seconds ?? event.start_seconds + event.duration_seconds)}</span></p>
-      {coaching && <><p className="practice-eyebrow">An adjustment to try</p><h3>{coaching.title}</h3>
+      {coaching && <><p className="practice-eyebrow">Movement to review</p><h3>{coaching.title}</h3>
       <div className="practice-gesture-explanation"><h4>What happened</h4><p>{coaching.observation}</p></div>
       <div className="practice-gesture-explanation"><h4>Why it matters</h4><p>{coaching.impact}</p></div>
-      <div className="practice-gesture-action"><h4>Try this next</h4><p>{coaching.recommendation}</p></div></>}
+      <div className="practice-gesture-action"><h4>What to try</h4><p>{coaching.recommendation}</p></div></>}
     </div>
   </article>;
 }
@@ -139,10 +139,10 @@ export function PracticeGestures({ events, token, tracking, duration = 0 }: { ev
     return () => observer.disconnect();
   }, [hasIssues]);
   const ticks = gestureTicks(end);
-  return <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">On camera</p><h2>Gestures & body language</h2><p className="practice-muted">See what happened, why it may matter, and one adjustment to try. Keep deliberate movements that support your message.</p></div></div>
+  return <section className="practice-panel"><div className="practice-panel-heading"><div><p className="practice-eyebrow">On camera</p><h2>Gestures & body language</h2><p className="practice-muted">Select a movement to watch the video, see what happened, and find a way to improve it.</p></div></div>
     {tracking?.status !== "reliable" && <div className="practice-gesture-warning" role="status">
       <strong>{!tracking ? "Your saved moments are ready to watch" : tracking.status === "insufficient" ? "The speaker is difficult to see" : "Some parts of the recording are difficult to see"}</strong>
-      <p>{!tracking ? "Choose a moment below to watch it and get feedback." : "For clearer feedback, keep your face, arms and torso in view with good lighting."}</p>
+      <p>{!tracking ? "Choose a moment below to watch it and get feedback." : "For clearer feedback, keep your face, arms and upper body in view with good lighting."}</p>
     </div>}
     {active ? <>
       <div className="practice-gesture-timeline-heading"><h3>Find a moment</h3><p className="practice-gesture-click-hint"><svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v16m-6-6 6 6 6-6" /></svg>Click a gesture to see its replay and feedback below.</p></div>
@@ -172,6 +172,6 @@ export function PracticeGestures({ events, token, tracking, duration = 0 }: { ev
       </div>
       <p className="practice-gesture-timeline-note">Selected moment · replay and coaching below</p>
       <GestureReview key={`${momentKey(active)}:${active.evidence_video_url || active.evidence_image_url}:${token}`} event={active} token={token} />
-    </> : <p className="practice-empty">{tracking?.status === "reliable" ? "No gesture issues were identified in this recording." : "For clearer gesture feedback, record with your face, arms and torso in view."}</p>}
+    </> : <p className="practice-empty">{tracking?.status === "reliable" ? "No gesture issues were identified in this recording." : "For clearer gesture feedback, record with your face, arms and upper body in view."}</p>}
   </section>;
 }

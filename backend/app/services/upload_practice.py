@@ -57,43 +57,21 @@ CONTEXTUAL_FILLER_PHRASES = (
 )
 POSE_LABELS = {
     "repeated_head_movement": "Repeated head movement",
-    "repeated_swaying": "Repeated torso swaying",
+    "repeated_swaying": "Repeated body swaying",
     "hand_near_face": "Hand near face",
-    "hands_clasped_low": "Hands clasped low",
+    "hands_clasped_low": "Hands held together in front of body",
     "arms_crossed": "Arms crossed",
     "gesture_box_excursion": "Arms extended too wide",
 }
 POSE_FEEDBACK = {
-    "repeated_head_movement": (
-        "Repeated head turns or sideways tilts were estimated in this excerpt. "
-        "Review whether they supported "
-        "audience contact or competed with your explanation. Try settling briefly between points; "
-        "natural glances and nods are appropriate. This is a movement estimate, not eye tracking."
-    ),
-    "repeated_swaying": (
-        "Review whether the side-to-side movement was intentional. If it competed with your "
-        "explanation, try settling your stance between points."
-    ),
-    "hand_near_face": (
-        "Your hand appeared near your face for a sustained moment or on repeated occasions. "
-        "Contact is not confirmed; "
-        "if these were incidental adjustments, try returning your hand to a relaxed position "
-        "between points."
-    ),
-    "hands_clasped_low": (
-        "Your hands appeared close together low on your torso. If this was a prolonged resting "
-        "position, consider a relaxed gesture to emphasize your next point."
-    ),
-    "arms_crossed": (
-        "An arm reached toward the opposite shoulder, or your forearms stayed folded across "
-        "your torso. If this was unintentional, try "
-        "releasing your arms between points. A deliberate pose can be appropriate."
-    ),
-    "gesture_box_excursion": (
-        "One arm appeared close to a full sideways extension. Review whether it supported "
-        "your point; if not, try returning to a relaxed position after the emphasis."
-    ),
+    "repeated_head_movement": "Your head repeatedly turned or tilted sideways. Keep your head comfortably upright and face the audience rather than moving it back and forth.",
+    "repeated_swaying": "Your body repeatedly moved from side to side. Stand with your weight balanced on both feet and avoid repeatedly shifting sideways.",
+    "hand_near_face": "Your hand stayed near your face or moved there repeatedly. Lower your hand so viewers can see your face clearly.",
+    "hands_clasped_low": "Your hands stayed together in front of your body. Separate them and let them rest comfortably instead of keeping them held together.",
+    "arms_crossed": "An arm reached across your chest toward the opposite shoulder, or both arms stayed crossed. Move your arms away from your chest and let them rest comfortably by your sides.",
+    "gesture_box_excursion": "An arm reached far out to the side. Bring it closer to your body instead of keeping it stretched out.",
 }
+
 MIN_EVENT_SECONDS = {
     "repeated_head_movement": 0.6,
     "repeated_swaying": 1.0,
@@ -826,7 +804,7 @@ def build_coaching_report(
             ),
         )
         if fast_events and slow_events:
-            headline = "Review changes in your delivery"
+            headline = "Changes in speaking speed"
             observation = (
                 f"Your delivery moved between {len(fast_events)} faster section"
                 f"{'s' if len(fast_events) != 1 else ''} and {len(slow_events)} slow section"
@@ -834,18 +812,16 @@ def build_coaching_report(
                 f"{format_duration_words(fast_duration)} in total."
             )
         elif fast_events:
-            headline = "Review your faster passages"
+            headline = "Fast speech"
             observation = (
-                f"Your delivery exceeded the faster-pace reference or rose substantially "
-                f"above your usual pace across {len(fast_events)} "
+                f"You spoke faster than the review range or much faster than your usual speed in {len(fast_events)} "
                 f"section{'s' if len(fast_events) != 1 else ''}, lasting about "
                 f"{format_duration_words(fast_duration)} in total."
             )
         else:
-            headline = "Review your pauses and slower passages"
+            headline = "Slow speech"
             observation = (
-                f"Your delivery fell below the slower-pace reference or substantially below "
-                f"your usual pace across {len(slow_events)} "
+                f"You spoke below the review range or much slower than your usual speed in {len(slow_events)} "
                 f"section{'s' if len(slow_events) != 1 else ''}, lasting about "
                 f"{format_duration_words(slow_duration)} in total."
             )
@@ -855,18 +831,14 @@ def build_coaching_report(
                 category="Vocal delivery",
                 headline=headline,
                 observation=observation,
-                impact="Speed alone does not establish a problem. A slower closing, emphasis, "
-                "or deliberate pause may help the audience; dense explanations may need "
-                "more space.",
+                impact="Speaking quickly can make details harder to follow. Speaking slowly can help explain a difficult idea, but long gaps may make listeners lose track.",
                 recommendation=(
-                    "Replay the excerpt and use its specific delivery feedback. The usual "
-                    "120–160 words-per-minute range is a reference, not a required target. "
-                    "Do not speed up a deliberate closing or meaningful pause just to meet it."
+                    "Listen to the highlighted section and follow the advice shown for it. Aim for a speed at which listeners can follow each sentence."
                 ),
                 drill=(
                     f"Rehearse the section beginning at "
                     f"{format_timestamp(float(longest_pace_event.get('start_seconds', 0)))} twice: "
-                    "once slowly, then once at a steady conversational pace."
+                    "at a comfortable speaking speed, checking that each sentence is easy to follow."
                 ),
                 start_seconds=float(longest_pace_event.get("start_seconds", 0)),
                 end_seconds=float(longest_pace_event.get("end_seconds", 0)),
@@ -896,13 +868,10 @@ def build_coaching_report(
                                     for term, count in filler_counts.items()) + "."
                     ),
                     impact=(
-                        "Repeated verbal habits compete with the point you want the audience "
-                        "to remember."
+                        "Frequent fillers can interrupt a sentence and make it harder for listeners to follow."
                     ),
                     recommendation=(
-                        "Replace unnecessary fillers with a brief silent "
-                        "pause or "
-                        "move directly to the next precise statement."
+                        "Leave out the filler and continue the sentence. If you need time to think, pause briefly instead."
                     ),
                     drill=(
                         f"Repeat the section around "
@@ -936,8 +905,7 @@ def build_coaching_report(
                 impact="This may be emphasis, an audience response, or a hesitation; timing "
                 "alone cannot distinguish them.",
                 recommendation=(
-                    "Replay the sentences on either side. Keep the pause if it gives an idea "
-                    "time to land; rehearse the transition only if you lost your place."
+                    "Listen to the sentences before and after the pause. Keep it if listeners need time to understand; shorten it if you stopped unexpectedly or lost your place."
                 ),
                 drill=(
                     "Practise the sentence before and after this pause five times without "
@@ -963,16 +931,14 @@ def build_coaching_report(
                     f"You restarted a word or phrase {len(repetition_events)} times during "
                     "the rehearsal."
                 ),
-                impact="Repeated starts can make transitions sound less prepared.",
+                impact="Repeating the start of a sentence can make it harder to follow what you mean.",
                 recommendation=(
-                    "Pause briefly before beginning the next sentence instead of correcting "
-                    "it mid-start."
+                    "Decide how to begin the sentence, pause briefly, then say it once without restarting."
                 ),
                 drill=(
                     f"Rehearse the transition near "
                     f"{format_timestamp(float(first_repeat.get('timestamp_seconds', 0)))} "
-                    "and begin "
-                    "each sentence only after a complete breath."
+                    "and practise saying the sentence once without repeating its opening words."
                 ),
                 start_seconds=float(first_repeat.get("timestamp_seconds", 0)),
                 end_seconds=float(first_repeat.get("timestamp_seconds", 0)) + 2,

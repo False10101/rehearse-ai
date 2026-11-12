@@ -38,7 +38,7 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
   return <section className="practice-panel practice-pace-panel" aria-labelledby="pace-heading">
     <div className="practice-panel-heading">
       <div><p className="practice-eyebrow">Speaking pace</p><h2 id="pace-heading">Find a pace your audience can follow</h2>
-        <p className="practice-muted">See where your delivery changes, then listen to a passage and practise the suggested adjustment.</p></div>
+        <p className="practice-muted">See where you spoke quickly or slowly. Select a highlighted section to listen and read the advice.</p></div>
       <span className="practice-count">{events.length} {events.length === 1 ? "passage" : "passages"} to review</span>
     </div>
     {samples.length ? <>
@@ -89,7 +89,7 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
         <span>Measured {time(samples[0].start_seconds)}–{time(samples[samples.length - 1].end_seconds)}. Each point sits at the middle of its 15-second passage.</span>
       </div>
       </div>
-    </> : <p className="practice-empty">This recording has no complete pace timeline. A new analysis is needed to draw the chart; any saved intervals remain below.</p>}
+    </> : <p className="practice-empty">The speaking-speed chart is unavailable. Analyze the recording again to create it. Saved sections are shown below.</p>}
     {events.length ? <div className="practice-pace-details">
       <div className="practice-pace-picker"><p className="practice-eyebrow">Choose a passage to practise</p>
         <div className="practice-intervals">{events.map((event, i) =>
@@ -99,11 +99,11 @@ export function PracticePaceChart({ samples, events, duration, moments, accessTo
           </button>)}</div>
       </div>
       {selected && <div className="practice-selected practice-pace-review" aria-live="polite">
-        <div className="practice-selected-title"><div><p className={`practice-pace-review-label ${selected.type}`}>{selected.type === "fast" ? "Faster passage" : "Slower passage"} · {time(selected.start_seconds)}–{time(selected.end_seconds)}</p><h3>Listen, then try the adjustment</h3></div><span className="practice-pace-estimate"><span>Estimated pace</span>{Math.round(selected.words_per_minute)} words/min</span></div>
+        <div className="practice-selected-title"><div><p className={`practice-pace-review-label ${selected.type}`}>{selected.type === "fast" ? "Faster passage" : "Slower passage"} · {time(selected.start_seconds)}–{time(selected.end_seconds)}</p><h3>Listen and practise</h3></div><span className="practice-pace-estimate"><span>Estimated pace</span>{Math.round(selected.words_per_minute)} words/min</span></div>
         {moment ? <PracticeSpeechMoment key={moment.id} moment={moment} accessToken={accessToken} presentation="review" />
-          : <p>The excerpt for this interval is missing from this saved report. Analyze the recording again to retain it.</p>}
-        <p className="practice-pace-review-note">Pace is estimated over 15-second speech windows. Listen to the excerpt before deciding whether to change your delivery.</p>
+          : <p>The audio and transcript for this section are unavailable. Analyze the recording again to create them.</p>}
+        <p className="practice-pace-review-note">Speed is estimated for each 15-second section. Listen to the recording to decide where to slow down or speak more quickly.</p>
       </div>}
-    </div> : samples.length ? <p className="practice-empty">No measured interval crossed the fast or slow review thresholds.</p> : null}
+    </div> : samples.length ? <p className="practice-empty">No unusually fast or slow sections were detected.</p> : null}
   </section>;
 }
