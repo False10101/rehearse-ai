@@ -46,10 +46,10 @@
 .practice-gesture-track { border-top:1px solid #eeebf3; }
 .practice-gesture-track-label { position:sticky; left:0; z-index:2; display:flex; align-items:center; gap:10px; background:#faf9fc; border-right:1px solid #e8e3f1; padding:8px 12px; color:#65547e; font-size:12px; line-height:1.5; }
 .practice-gesture-track-label svg { flex-shrink:0; }
-.practice-gesture-track[data-body-area] { --gesture-color:#65547e; --gesture-soft:#f1edf6; }
-.practice-gesture-track[data-body-area="arms"] { --gesture-color:#3e6aab; --gesture-soft:#edf4ff; }
-.practice-gesture-track[data-body-area="head"] { --gesture-color:#7051a3; --gesture-soft:#f3edff; }
-.practice-gesture-track[data-body-area="torso"] { --gesture-color:#337f70; --gesture-soft:#eaf8f3; }
+.practice-gesture-track[data-body-area] { --gesture-color:#65547e; --gesture-soft:#f1edf6; --gesture-border:#d8cde6; }
+.practice-gesture-track[data-body-area="arms"] { --gesture-color:#3e6aab; --gesture-soft:#edf4ff; --gesture-border:#c1d5f2; }
+.practice-gesture-track[data-body-area="head"] { --gesture-color:#7051a3; --gesture-soft:#f3edff; --gesture-border:#d7c7ee; }
+.practice-gesture-track[data-body-area="torso"] { --gesture-color:#337f70; --gesture-soft:#eaf8f3; --gesture-border:#badfd4; }
 .practice-gesture-track-label > span { display:flex; flex-direction:column; gap:2px; font-weight:600; }
 .practice-gesture-track-label small { color:#837b8c; font-size:10px; font-weight:400; }
 .practice-gesture-track-empty { position:absolute; inset:0; display:flex; align-items:center; padding-left:16px; color:#837b8c; font-size:11px; pointer-events:none; }
@@ -148,7 +148,7 @@
 @media(max-width:760px) { .practice-speech-grid { grid-template-columns:minmax(0,1fr); padding-inline:0; } .practice-speech-grid::before { display:none; } }
 @media(max-width:760px) { .practice-columns,.practice-pace-details { grid-template-columns:1fr; } .practice-heading { align-items:start; flex-direction:column; } .practice-nav-brand { gap:14px; } .practice-nav-brand > span { padding-left:14px; font-size:12px; } .practice-panel-heading { flex-wrap:wrap; } .practice-chart-caption { min-height:60px; } .practice-content { padding:20px 16px; } }
 
-/* Movement-specific colors stay consistent in row labels, markers and replay. */
+/* Timeline markers inherit body-area colors. Replay labels retain movement colors. */
 [data-gesture] { --gesture-color:#70519d; --gesture-soft:#f1eafa; --gesture-border:#d8c9eb; }
 [data-gesture="arms_crossed"] { --gesture-color:#a34d38; --gesture-soft:#fff0e9; --gesture-border:#efc8ba; }
 [data-gesture="gesture_box_excursion"] { --gesture-color:#3e6aab; --gesture-soft:#edf4ff; --gesture-border:#c1d5f2; }
